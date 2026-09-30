@@ -1,0 +1,284 @@
+{
+  "$schema": "https://sing-box.sagernet.org/schema.json",
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "dns-bootstrap",
+        "server": "223.5.5.5",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "dns.alidns.com"
+        }
+      },
+      {
+        "type": "https",
+        "tag": "dns-cn",
+        "server": "223.5.5.5",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "dns.alidns.com"
+        }
+      },
+      {
+        "type": "https",
+        "tag": "dns-proxy",
+        "detour": "vless-reality",
+        "server": "104.16.132.249",
+        "server_port": 443,
+        "path": "/dns-query",
+        "tls": {
+          "enabled": true,
+          "server_name": "cloudflare-dns.com"
+        }
+      },
+      {
+        "type": "local",
+        "tag": "dns-local"
+      }
+    ],
+    "rules": [
+      {
+        "action": "route",
+        "rule_set": [
+          "geosite-private"
+        ],
+        "server": "dns-local"
+      },
+      {
+        "action": "route",
+        "rule_set": [
+          "geosite-cn",
+          "geosite-cn-lite"
+        ],
+        "server": "dns-cn"
+      },
+      {
+        "action": "route",
+        "rule_set": [
+          "geosite-ai"
+        ],
+        "server": "dns-proxy"
+      }
+    ],
+    "final": "dns-proxy",
+    "strategy": "prefer_ipv4",
+    "cache_capacity": 8192,
+    "optimistic": true,
+    "timeout": "5s"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.18.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "strict_route": true,
+      "dns_mode": "hijack"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "节点-国外",
+      "outbounds": [
+        "vless-reality",
+        "hysteria2-us-ai"
+      ],
+      "default": "vless-reality",
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "selector",
+      "tag": "节点-AI",
+      "outbounds": [
+        "vless-reality",
+        "hysteria2-us-ai"
+      ],
+      "default": "hysteria2-us-ai",
+      "interrupt_exist_connections": true
+    },
+    {
+      "type": "vless",
+      "tag": "vless-reality",
+      "server": "reality.example.com",
+      "server_port": 443,
+      "uuid": "11111111-1111-1111-1111-111111111111",
+      "flow": "xtls-rprx-vision",
+      "network": "tcp",
+      "packet_encoding": "xudp",
+      "tls": {
+        "enabled": true,
+        "server_name": "example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "short_id": "0000000000000000"
+        }
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hysteria2-us-ai",
+      "server": "hy2.example.com",
+      "server_port": 52341,
+      "password": "CHANGE-ME",
+      "tls": {
+        "enabled": true,
+        "server_name": "hy2.example.com"
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "direct",
+      "tag": "direct-download",
+      "inet4_bind_address": "0.0.0.0"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff",
+        "sniffer": [
+          "http",
+          "tls",
+          "quic",
+          "stun"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geosite-private"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geosite-cn",
+          "geosite-cn-lite"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "ip_is_private": true
+      },
+      {
+        "action": "route",
+        "outbound": "direct",
+        "rule_set": [
+          "geoip-cn"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "节点-AI",
+        "rule_set": [
+          "geosite-ai"
+        ]
+      },
+      {
+        "action": "route",
+        "outbound": "节点-国外",
+        "rule_set": [
+          "geosite-proxy"
+        ]
+      },
+      {
+        "action": "reject",
+        "protocol": [
+          "bittorrent"
+        ]
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geosite-private",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo-lite/geosite/private.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn-lite",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo-lite/geosite/cn.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-proxy",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo-lite/geosite/proxy.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-ai",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ai-%21cn.srs",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "update_interval": "7d"
+      }
+    ],
+    "final": "节点-国外",
+    "default_domain_resolver": {
+      "server": "dns-bootstrap",
+      "strategy": "prefer_ipv4"
+    },
+    "default_http_client": "ruleset-downloader"
+  },
+  "http_clients": [
+    {
+      "tag": "ruleset-downloader",
+      "detour": "direct-download",
+      "connect_timeout": "10s",
+      "idle_timeout": "30s"
+    }
+  ],
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db",
+      "cache_id": "ios-split-2026",
+      "store_fakeip": false,
+      "store_dns": true
+    }
+  }
+}
