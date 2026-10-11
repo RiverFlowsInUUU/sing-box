@@ -40,7 +40,7 @@ templates/                 片段骨架（节点、分流组）
 tools/audit.py             门禁
 tools/upgrade-check.py     升级巡检
 tools/gen-docs.py          由 JSON 生成人读版矩阵
-archive/                   旧大版本配置归档
+archive/                   归档目录，按大版本分子目录（只归档，不删除）
 ```
 
 **为什么 `profiles/` 按大版本分目录**：1.14 的配置在 1.15 上可能直接 `FATAL`（例如 1.17 移除
@@ -198,6 +198,20 @@ echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
 python tools/upgrade-check.py --write    # 更新上游文档快照
 ```
 
+### B6. 归档旧版（**只归档，不删除**）
+
+一旦配置目录升到新的大版本，旧的 profile 目录移入 `archive/<大版本>/`：
+
+```bash
+git mv profiles/1.14 archive/1.14
+```
+
+规矩：
+
+- **永不删除历史配置**，只归档。改坏了随时能翻回去对照。
+- `archive/` 下按 sing-box 大版本建子目录（`archive/1.14/`、`archive/1.15/`…）。
+- 每个归档子目录最好留一份 `README.md`，写清楚“为什么不再维护、替代文件是哪个”。
+
 ## 四、流程 C：用户反馈"跑不起来"
 
 按报错形态分流：
@@ -222,6 +236,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 3. 不确定"什么时候移除"的，`removed_in` 留空或写 `null`，别猜。
 4. 每条都要有 `doc` 链接。
 5. 改完必须 `python tools/audit.py` 全绿才算完。
+6. **只归档不删除**：升级到新大版本时旧的 `profiles/<版本>/` 移入 `archive/<版本>/`，历史配置永远保留。
 
 ## 六、常见误区
 
@@ -233,3 +248,4 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | "规则集用 GitHub raw 就行" | 国内经常打不开，必须走 jsdelivr CDN，且配置里显式指定下载用的 `http_client` |
 | "`cache_file.path` 可以写 `../cache/cache.db`" | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL` 起不来。写 `cache.db` |
 | "分流组越多越好" | 本仓库只要 `Proxy` / `AI` / `AD` 三个 + `direct` / `block` |
+| "旧版本配置没用了可以删" | 不删。移进 `archive/<大版本>/`，改坏了还能翻回去对照 |

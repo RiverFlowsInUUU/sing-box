@@ -53,7 +53,7 @@ tools/
   audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + sing-box check
   upgrade-check.py            ← 上游有新正式版/新废弃项时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md
-archive/                      ← 旧版本配置归档
+archive/<大版本>/             ← 旧版本配置归档（按 sing-box 大版本分目录，只归档不删除）
 ```
 
 ## 3. 三种典型任务

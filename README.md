@@ -49,7 +49,7 @@ tools/
   audit.py                    门禁：结构 + 废弃字段 + 平台能力 + sing-box check
   upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
-archive/                      不再维护的旧文件（含说明）
+archive/<大版本>/               归档目录：旧版本配置只归档，永不删除
 ```
 
 ## 这套仓库解决什么问题
@@ -92,6 +92,7 @@ python tools/upgrade-check.py
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
 7. 仓库里**不存真实节点**
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
+9. **旧版本配置只归档不删除**，移进 `archive/<大版本>/`
 
 ## 常见坑
 
@@ -103,6 +104,7 @@ python tools/upgrade-check.py
 | reality `public_key` 随便填占位 | 必须是合法 base64url，否则 `FATAL invalid public_key` |
 | SS 2022 密码随便填 | 必须是合法 base64（aes-128 解 16 字节、aes-256 解 32 字节） |
 | iOS 配置里留了 `strict_route` | Apple 客户端未实现，删掉 |
+| 升级后把旧 `profiles/1.14/` 删了 | 不删。`git mv profiles/1.14 archive/1.14`，改坏了还能翻回去对照 |
 
 ## 版本
 
