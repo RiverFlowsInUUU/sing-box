@@ -12,19 +12,26 @@
     {
       "type": "selector",
       "tag": "Proxy",
-      "outbounds": ["Auto"],
+      "outbounds": [
+        "Auto"
+      ],
       "default": "Auto"
     },
     {
       "type": "selector",
       "tag": "AI",
-      "outbounds": ["Auto"],
+      "outbounds": [
+        "Auto"
+      ],
       "default": "Auto"
     },
     {
       "type": "selector",
       "tag": "AD",
-      "outbounds": ["block", "direct"],
+      "outbounds": [
+        "block",
+        "direct"
+      ],
       "default": "block"
     },
     {
@@ -34,12 +41,20 @@
     {
       "type": "block",
       "tag": "block"
+    },
+    {
+      "type": "direct",
+      "tag": "direct-download",
+      "domain_resolver": {
+        "server": "dns-bootstrap"
+      }
     }
   ],
   "_rules_of_thumb": [
     "Auto 里放所有代理节点，Proxy / AI 默认指向 Auto，这样加节点只需改一处",
     "Proxy 里可以额外放 Auto 之外的指定节点，供用户手动切",
     "AD 的 outbounds 永远只有 block 和 direct（tools/audit.py 会检查）",
-    "tag 名 Proxy / AI / AD / Auto / direct / block 是保留名，节点不得占用"
+    "tag 名 Proxy / AI / AD / Auto / direct / block 是保留名，节点不得占用",
+    "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense"
   ]
 }

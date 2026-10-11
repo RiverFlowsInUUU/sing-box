@@ -255,6 +255,46 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
                     else:
                         rep.warn(e["id"], msg + f"（隐式行为将于 {rem} 移除）")
 
+            elif e.get("semantic") == "empty_direct_as_download_detour":
+                # 这条不扫规则集，而是扫 http_clients / download_detour 指向的 direct 出站。
+                # 静态部分与 audit_repo_rules 的 1c) 重叠，这里提供的是矩阵驱动的统一入口。
+                outs = cfg.get("outbounds", [])
+                by_tag = {
+                    o.get("tag"): o
+                    for o in outs
+                    if isinstance(o, dict) and o.get("tag")
+                }
+                NON_EMPTY = (
+                    "bind_interface", "inet4_bind_address", "inet6_bind_address",
+                    "bind_address_no_port", "protect_path", "routing_mark", "reuse_addr",
+                    "netns", "connect_timeout", "tcp_fast_open", "tcp_multi_path",
+                    "disable_tcp_keep_alive", "tcp_keep_alive", "tcp_keep_alive_interval",
+                    "udp_fragment", "domain_resolver", "network_strategy", "network_type",
+                    "fallback_network_type", "fallback_delay", "detour",
+                )
+
+                def _empty(tag):
+                    ob = by_tag.get(tag)
+                    if not isinstance(ob, dict) or ob.get("type") != "direct":
+                        return False
+                    return not any(k in ob for k in NON_EMPTY)
+
+                route = cfg.get("route", {})
+                for i, hc in enumerate(cfg.get("http_clients") or []):
+                    if isinstance(hc, dict) and _empty(hc.get("detour")):
+                        rep.error(
+                            e["id"],
+                            f"[{e['id']}] http_clients[{i}].detour={hc.get('detour')!r} 是空 direct 出站"
+                            f" → {e.get('replacement')}",
+                        )
+                dflt = route.get("default_http_client")
+                if dflt and _empty(dflt):
+                    rep.error(e["id"], f"[{e['id']}] route.default_http_client={dflt!r} 是空 direct 出站")
+                for i, rs in enumerate(route.get("rule_set", [])):
+                    dd = rs.get("download_detour")
+                    if dd and _empty(dd):
+                        rep.error(e["id"], f"[{e['id']}] route.rule_set[{i}].download_detour={dd!r} 是空 direct 出站")
+
 
 def _audit_jinx(route, rep: Report):
     """Jinx 广告/放行规则集的成对性与顺序（本仓库强规范）。
@@ -372,8 +412,86 @@ def audit_repo_rules(cfg, rep: Report):
                     "含真实节点的配置请放仓库外的 local/ 目录，不要提交",
                 )
 
-    # 2) 远程规则集必须走允许的 CDN，且必须指定 http_client
     route = cfg.get("route", {})
+
+    # 1c) http_client / download_detour 指向的 direct 出站不能是"空"的
+    #     典型坑：direct 出站写成 {"type":"direct","tag":"direct"} 就是空洞。
+    #     空洞下载规则集会 FATAL:"detour to an empty direct outbound makes no sense"，
+    #     而且 **只发生在 sing-box run，check 完全静默**（protocol/direct/outbound.go 的
+    #     isEmpty = DeepEqual(DialerOptions, 只含 UDPFragmentDefault:true)）。
+    #     注意：domain_strategy / network_strategy 已废弃、被 schema:"omit"，填了也不算。
+    #     真正能让 direct 非空的是 bind_interface / inet4_bind_address / routing_mark /
+    #     domain_resolver / connect_timeout 等。
+    outbounds = cfg.get("outbounds", [])
+    by_tag = {o.get("tag"): o for o in outbounds if isinstance(o, dict) and o.get("tag")}
+    NON_EMPTY = (
+        "bind_interface", "inet4_bind_address", "inet6_bind_address", "bind_address_no_port",
+        "protect_path", "routing_mark", "reuse_addr", "netns", "connect_timeout",
+        "tcp_fast_open", "tcp_multi_path", "disable_tcp_keep_alive", "tcp_keep_alive",
+        "tcp_keep_alive_interval", "udp_fragment", "domain_resolver", "network_strategy",
+        "network_type", "fallback_network_type", "fallback_delay", "detour",
+    )
+
+    def _empty_direct(tag):
+        """返回 True 表示该出站是"空洞 direct"（不能作为下载 detour）。"""
+        ob = by_tag.get(tag)
+        if not isinstance(ob, dict) or ob.get("type") != "direct":
+            return False
+        return not any(k in ob for k in NON_EMPTY)
+
+    hc_entries = cfg.get("http_clients") or []
+    DL_TAG = "direct-download"
+    for i, hc in enumerate(hc_entries):
+        if not isinstance(hc, dict):
+            continue
+        dt = hc.get("detour")
+        if not dt:
+            continue
+        if dt not in by_tag:
+            rep.error(
+                "dangling_download_detour",
+                f"http_clients[{i}] ({hc.get('tag')}) 的 detour={dt!r} 指向不存在的出站",
+            )
+            continue
+        if _empty_direct(dt):
+            rep.error(
+                "download_detour_empty_direct",
+                f"http_clients[{i}] ({hc.get('tag')}) 的 detour={dt!r} 是一个空 direct 出站；"
+                "规则集下载会 FATAL: 'detour to an empty direct outbound makes no sense'。"
+                f"仓库约定：下载必须走 tag 为 {DL_TAG!r} 的专用 direct 出站，"
+                "它至少带 domain_resolver（或 bind_interface / inet4_bind_address 等）",
+            )
+        elif dt != DL_TAG:
+            rep.warn(
+                "download_uses_main_direct",
+                f"http_clients[{i}] ({hc.get('tag')}) 的 detour={dt!r} 不是专用的 {DL_TAG!r}；"
+                "当前非空、能跑，但主 direct 一旦被改成裸的 {'type':'direct','tag':'direct'} 就会立刻 FATAL。"
+                f"仓库约定统一用 {DL_TAG!r}",
+            )
+    if by_tag and DL_TAG not in by_tag and any(
+        isinstance(hc, dict) and hc.get("detour") for hc in hc_entries
+    ):
+        rep.warn(
+            "no_download_direct",
+            f"仓库里定义了 http_clients 但没有 {DL_TAG!r} 出站；"
+            "按约定每个 profile 都应该有它（带 domain_resolver），供规则集下载专用",
+        )
+    default_hc_tag = route.get("default_http_client")
+    if default_hc_tag and _empty_direct(default_hc_tag):
+        rep.error(
+            "download_detour_empty_direct",
+            f"route.default_http_client={default_hc_tag!r} 是一个空 direct 出站，同样会 FATAL；"
+            "修法与 http_clients 相同",
+        )
+    for i, rs in enumerate(route.get("rule_set", [])):
+        dd = rs.get("download_detour")
+        if dd and _empty_direct(dd):
+            rep.error(
+                "download_detour_empty_direct",
+                f"route.rule_set[{i}] ({rs.get('tag')}) 的 download_detour={dd!r} 是空 direct 出站，会 FATAL",
+            )
+
+    # 2) 远程规则集必须走允许的 CDN，且必须指定 http_client
     default_hc = route.get("default_http_client")
     has_http_clients = bool(cfg.get("http_clients"))
     remote_count = 0
@@ -556,6 +674,92 @@ def run_singbox_check(binary: str, cfg_path: Path, rep: Report):
         rep.info("singbox_check", "sing-box check EXIT=0")
 
 
+def run_singbox_run(binary: str, cfg_path: Path, rep: Report, seconds: int = 15):
+    """真正跑一次 sing-box run 来抓 check 看不见的启动期 FATAL。
+
+    为什么需要：`sing-box check` **只反序列化，不做任何初始化**，所以下面这些错
+    它一律 exit=0：
+      · 空的 direct 出站（'detour to an empty direct outbound makes no sense'）
+      · 初始化规则集 / DNS 服务器 / 出站时才会暴露的引用与资源问题
+    代价：会真的建立网络连接（拿规则集、连 DNS），所以默认不带 --run，由调用方按需开启。
+    成功特征：进程活到超时被我仨杀。【致命错】只看是否出现 FATAL 字样。
+    不能直接拿 run去验证 tun 入站（Windows 上会走 netstack 假接口），所以要先把 tun 替成 mixed。
+    """
+    import tempfile
+
+    try:
+        cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+    except Exception as ex:
+        rep.warn("run_skipped", f"无法读取配置做 run 验证：{ex}")
+        return
+
+    # tun 入站换成 mixed，避免在 Windows 上建假网卡；没有 tun 就不动
+    patched = 0
+    free_port = 0
+    for i, ib in enumerate(cfg.get("inbounds", [])):
+        if isinstance(ib, dict) and ib.get("type") == "tun":
+            free_port = _free_port()
+            cfg["inbounds"][i] = {
+                "type": "mixed",
+                "tag": ib.get("tag", "tun-in"),
+                "listen": "127.0.0.1",
+                "listen_port": free_port,
+            }
+            patched += 1
+
+    # cache_file 换个临时路径，免得污染工作目录（并避开 fi.le 锁冲突）
+    with tempfile.TemporaryDirectory(prefix="sb-run-") as td:
+        exp = cfg.setdefault("experimental", {})
+        cf = exp.get("cache_file")
+        if isinstance(cf, dict) and cf.get("enabled"):
+            cf = dict(cf)
+            cf["path"] = str(Path(td) / "cache.db")
+            exp["cache_file"] = cf
+        tmp_cfg = Path(td) / "run-check.json"
+        tmp_cfg.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            p = subprocess.run(
+                [binary, "run", "-c", str(tmp_cfg)],
+                capture_output=True,
+                text=True,
+                timeout=seconds,
+                cwd=td,
+            )
+            out = (p.stdout or "") + (p.stderr or "")
+            timed_out = False
+            if p.returncode == 0:
+                out += "\n[未超时正常退出，可能主进程直接退了]"
+        except subprocess.TimeoutExpired as ex:
+            timed_out = True
+            out = ((ex.stdout or b"").decode("utf-8", "replace") if isinstance(ex.stdout, bytes) else (ex.stdout or ""))
+            out += (ex.stderr or b"").decode("utf-8", "replace") if isinstance(ex.stderr, bytes) else (ex.stderr or "")
+        except FileNotFoundError:
+            rep.warn("no_singbox", f"找不到可执行文件 {binary}，已跳过 sing-box run 验证")
+            return
+
+    fatal = [ln.strip() for ln in out.splitlines() if "FATAL" in ln]
+    if fatal:
+        for ln in fatal[:6]:
+            rep.error("singbox_run", re.sub(r"\x1b\[[0-9;]*m", "", ln))
+    else:
+        if timed_out:
+            rep.info("singbox_run", f"sing-box run 存活 {seconds}s 未报 FATAL（已主动终止）")
+        else:
+            rep.info("singbox_run", "sing-box run 未报 FATAL")
+        if patched:
+            rep.info("singbox_run_tun", f"run 验证时把 {patched} 个 tun 入站临时换成 mixed（{free_port}）")
+
+
+def _free_port():
+    import socket
+
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -596,6 +800,13 @@ def main():
     ap.add_argument("--version", default=None, help="目标 sing-box 正式版号，如 1.14.3")
     ap.add_argument("--singbox", default=None, help="sing-box 可执行文件路径")
     ap.add_argument("--no-check", action="store_true", help="跳过 sing-box check")
+    ap.add_argument(
+        "--run",
+        action="store_true",
+        help="额外真跑一次 sing-box run，抓 check 看不见的启动期 FATAL（如空 direct 出站）。"
+        "会真的发起网络连接，默认关闭",
+    )
+    ap.add_argument("--run-seconds", type=int, default=15, help="--run 时跑多少秒，默认 15")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     args = ap.parse_args()
 
@@ -646,6 +857,8 @@ def main():
         audit_repo_rules(cfg, rep)
         if binary:
             run_singbox_check(binary, t, rep)
+            if args.run:
+                run_singbox_run(binary, t, rep, args.run_seconds)
         else:
             rep.info("no_singbox", "未指定 sing-box 可执行文件，已跳过 sing-box check")
 

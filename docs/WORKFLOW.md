@@ -229,8 +229,32 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | `FATAL ... decode config at` 后面跟着具体路径 | 类型/枚举值不对 | 看错误里指出的路径 |
 | `FATAL ... initialize outbound[n]: invalid public_key / illegal base64` | 密钥格式不对 | reality public_key 必须是合法 base64url；SS 2022 密码必须是合法 base64 |
 | `FATAL ... http_client is conflict with deprecated download_detour field` | 两者同时出现 | 删掉 `download_detour` |
+| `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` / `network_strategy` 已被 `schema:"omit"`，填了也不起作用、仍算空** |
 | 启动成功但某类流量走错 | 平台能力 / 规则顺序 | 查 `docs/PLATFORM-MATRIX.md`、检查 `route.rules` 顺序 |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
+
+### ⚠️ 最重要的一条：`check` 过了不代表启动得了
+
+**`sing-box check` 只做反序列化，不做任何初始化。**下面这类错它**一律 exit=0、一句话不说**：
+
+- 空的 direct 出站（`detour to an empty direct outbound makes no sense`）
+- 规则集 / DNS 服务器 / 出站在**初始化期**才会暴露的引用与资源问题
+- 规则集 URL 实际下不下来（要等真去 Get 那一刻）
+
+判定机制（源码级）：`protocol/direct/outbound.go` 里
+`isEmpty = reflect.DeepEqual(options.DialerOptions, option.DialerOptions{AbstractDialerOptions{UDPFragmentDefault: true}})`——
+即整个 dialer 选项块一个非默认字段都没有就是“空”。`common/dialer/detour.go` 的 `init()`
+在 `!defaultOutbound && !disableEmptyDirectCheck` 时对 `IsEmpty()` 的 direct 直接报错。
+
+**所以仓库的门禁必须真跑一次**：
+
+```bash
+# 会真的连网拉规则集，故不放进默认；发布前/排错时必跑
+python tools/audit.py --run --run-seconds 20
+```
+
+`--run` 会自己把 tun 入站临时替成 `mixed`（避免 Windows 建假网卡），把 `cache_file.path` 指到临时目录，
+跑 20 秒后主动终止，只看输出里有没有 `FATAL`。CI 里已经默认带上这一步。
 
 **修完必须回写**：把这次踩坑补进 `docs/PROTOCOL-MAPPING.md` 的"常见解码坑"表，
 或 `docs/version-matrix.json`。否则下次还会踩。
@@ -247,7 +271,9 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 
 | 误区 | 事实 |
 |---|---|
-| "`sing-box check` 过了就没问题" | 错。`download_detour` 这类废弃字段它一句话都不说，平台能力也不校验 |
+| "`sing-box check` 过了就没问题" | 错，而且错得很危险。`check` **只反序列化、不初始化**：空 direct 出站、规则集下不下来、`download_detour` 这类废弃字段，它全都不吭声。发布前必须 `audit.py --run` |
+| "`direct` 出站就是个直连，不用写别的" | 裸的 `{"type":"direct","tag":"direct"}` 是**空 direct**，不能当规则集下载的 detour。下载专用出站固定叫 `direct-download`，必须带 `domain_resolver` |
+| "给 direct 加 `domain_strategy: ipv4_only` 就不算空了" | 错。`domain_strategy` 已废弃并被 `schema:"omit"`，**填了也不算数**；而且 1.14 下直接触发 legacy domain strategy 的 FATAL。真正算数的是 `domain_resolver` / `bind_interface` / `inet4_bind_address` / `routing_mark` 等 |
 | "字段没了内核会提示" | 未知字段/已移除字段会，**已废弃未移除的常常不会** |
 | "iOS 和 Windows 配置可以通用" | 大部分可以，但 `strict_route`、`clash_api`、TUN 地址这些要分开 |
 | "规则集用 GitHub raw 就行" | 国内经常打不开，必须走 jsdelivr CDN，且配置里显式指定下载用的 `http_client` |

@@ -37,14 +37,23 @@ jobs:
           sing-box version
 
       - name: 结构 / 废弃字段 / 平台能力 / 引用完整性 门禁
-        run: python tools/audit.py
+        env:
+          SINGBOX_BIN: /usr/local/bin/sing-box
+        run: python tools/audit.py --run --run-seconds 20
 
-      - name: 校验配置 JSON 可被内核解码
+      - name: 校验配置 JSON 可被内核解码（check）
         run: |
           for f in profiles/*/*.json; do
             echo "== $f"
             sing-box check -c "$f"
           done
+
+      - name: 说明：为什么还要 --run
+        run: |
+          echo "sing-box check 只反序列化、不做初始化，所以下面这类错它一律 exit=0："
+          echo "  · 空的 direct 出站（'detour to an empty direct outbound makes no sense'）"
+          echo "  · 规则集 / DNS / 出站初始化期的引用与资源问题"
+          echo "audit.py --run 会把 tun 入站临时替成 mixed 并真跑一次 run，抓启动期 FATAL。"
 
       - name: 人读版矩阵是否与 JSON 同步
         run: |

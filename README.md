@@ -87,7 +87,7 @@ python tools/upgrade-check.py
 1. 只面向**正式版**
 2. 未知字段 = 致命
 3. 已移除字段 = 致命
-4. **`check` 通过 ≠ 配置正确**
+4. **`check` 通过 ≠ 能启动**——`check` 只反序列化、不初始化。交付前必须 `audit.py --run` 真启动一次
 5. 平台能力不同，iOS/Android **没有** `strict_route`
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
 7. **任何时候仓库都不放真实节点**——含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送
@@ -100,6 +100,8 @@ python tools/upgrade-check.py
 | 规则集用 GitHub raw，国内打不开 | 用 `https://testingcf.jsdelivr.net/gh/…`（CDN 前缀统一）|
 | `rule_set` 写了 `download_detour` | 已废弃，改用顶层 `http_clients` + 规则集上的 `http_client` |
 | `cache_file.path` 写 `../cache/cache.db` | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL`。写 `cache.db` |
+| 规则集下载 detour 指向裸的 `direct` 出站 | **启动即 FATAL**：`detour to an empty direct outbound makes no sense`，而 `check` 完全静默。下载走专用 `direct-download`，且它必须带 `domain_resolver` |
+| 想用 `domain_strategy: ipv4_only` 把 direct 凑成“非空” | 不行。它已 `schema:"omit"`，**填了也不算数**，而且 1.14 下直接触发 legacy domain strategy 的 FATAL。用 `domain_resolver` |
 | reality `public_key` 随便填占位 | 必须是合法 base64url，否则 `FATAL invalid public_key` |
 | SS 2022 密码随便填 | 必须是合法 base64（aes-128 解 16 字节、aes-256 解 32 字节） |
 | iOS 配置里留了 `strict_route` | Apple 客户端未实现，删掉 |

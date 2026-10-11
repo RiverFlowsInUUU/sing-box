@@ -184,7 +184,11 @@
       "kind": "removed",
       "deprecated_in": "1.11.0",
       "removed_in": "1.13.0",
-      "type_check": { "where": "outbounds", "field": "type", "equals": "wireguard" },
+      "type_check": {
+        "where": "outbounds",
+        "field": "type",
+        "equals": "wireguard"
+      },
       "replacement": "endpoints[].type = wireguard",
       "doc": "https://sing-box.sagernet.org/deprecated/#wireguard-outbound"
     },
@@ -256,14 +260,21 @@
       "kind": "removed",
       "deprecated_in": "1.5.0",
       "removed_in": "1.6.0",
-      "type_check": { "where": "outbounds", "field": "type", "equals": "shadowsocksr" },
+      "type_check": {
+        "where": "outbounds",
+        "field": "type",
+        "equals": "shadowsocksr"
+      },
       "replacement": "无（sing-box 已不支持 SSR）",
       "doc": "https://sing-box.sagernet.org/deprecated/#shadowsocksr"
     },
     {
       "id": "platform_strict_route",
       "kind": "platform",
-      "platforms": ["android", "ios"],
+      "platforms": [
+        "android",
+        "ios"
+      ],
       "path": "inbounds[type=tun].strict_route",
       "replacement": "删除该字段（移动端未实现）",
       "doc": "https://sing-box.sagernet.org/clients/android/features/",
@@ -272,7 +283,9 @@
     {
       "id": "platform_process_rule",
       "kind": "platform",
-      "platforms": ["android"],
+      "platforms": [
+        "android"
+      ],
       "path": "**.process_name",
       "replacement": "在移动端改用 package_name / include_package / exclude_package",
       "doc": "https://sing-box.sagernet.org/clients/android/features/"
@@ -280,7 +293,10 @@
     {
       "id": "platform_process_path_rule",
       "kind": "platform",
-      "platforms": ["android", "ios"],
+      "platforms": [
+        "android",
+        "ios"
+      ],
       "path": "**.process_path",
       "replacement": "移动端不可用",
       "doc": "https://sing-box.sagernet.org/clients/apple/features/"
@@ -288,10 +304,23 @@
     {
       "id": "platform_uid_rule",
       "kind": "platform",
-      "platforms": ["android", "ios"],
+      "platforms": [
+        "android",
+        "ios"
+      ],
       "path": "**.user_id",
       "replacement": "Android 用 package_name；Apple 仅 macOS 独立版/iOS 越狱版可用",
       "doc": "https://sing-box.sagernet.org/clients/apple/features/"
+    },
+    {
+      "id": "empty_direct_outbound_download_detour",
+      "kind": "semantic",
+      "semantic": "empty_direct_as_download_detour",
+      "deprecated_in": "1.11.0",
+      "path": "",
+      "replacement": "给下载用的 direct 出站加 domain_resolver（或 bind_interface / inet4_bind_address / routing_mark 等），或改走 Proxy；只写 {\"type\":\"direct\",\"tag\":\"direct\"} 的空 direct 不能作为规则集下载 detour",
+      "doc": "https://github.com/SagerNet/sing-box/blob/dev/common/dialer/detour.go",
+      "note": "check 完全静默，只有 run 启动规则集时才会 FATAL: detour to an empty direct outbound makes no sense。protocol/direct/outbound.go 用 reflect.DeepEqual(DialerOptions, {UDPFragmentDefault:true}) 判定 isEmpty"
     }
   ]
 }

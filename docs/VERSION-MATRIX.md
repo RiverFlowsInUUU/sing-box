@@ -43,6 +43,7 @@
 | 1.16.0 | 1.14.0 | 废弃中 | `experimental.cache_file.store_rdrc` | experimental.cache_file.store_dns |
 | 1.16.0 | 1.14.0 | 废弃中 | `**.tls.acme` | certificate provider（configuration/certificate/ + tls.certificate_provider） |
 | 1.17.0 | 1.15.0 | 废弃中 | `inbounds[type=tun].stack` | 直接删除 stack，使用 sing-tun 自带 TCP/IP 栈 |
+| — | 1.11.0 | 语义变更 | `empty_direct_as_download_detour` | 给下载用的 direct 出站加 domain_resolver（或 bind_interface / inet4_bind_address / routing_mark 等），或改走 Proxy；只写 {"type":"direct","tag":"direct"} 的空 direct 不能作为规则集下载 detour |
 | — | — | 平台限制 | `**.process_path` | 移动端不可用 |
 | — | — | 平台限制 | `**.process_name` | 在移动端改用 package_name / include_package / exclude_package |
 | — | — | 平台限制 | `inbounds[type=tun].strict_route` | 删除该字段（移动端未实现） |
@@ -160,6 +161,14 @@
 - 替代写法：无（改用标准库 ECH）
 - 备注：涉及 pq_signature_schemes_enabled / dynamic_record_sizing_disabled
 - 官方：https://sing-box.sagernet.org/deprecated/#legacy-ech-fields
+
+### `empty_direct_outbound_download_detour`
+
+- 类别：语义变更
+- 废弃于：1.11.0
+- 替代写法：给下载用的 direct 出站加 domain_resolver（或 bind_interface / inet4_bind_address / routing_mark 等），或改走 Proxy；只写 {"type":"direct","tag":"direct"} 的空 direct 不能作为规则集下载 detour
+- 备注：check 完全静默，只有 run 启动规则集时才会 FATAL: detour to an empty direct outbound makes no sense。protocol/direct/outbound.go 用 reflect.DeepEqual(DialerOptions, {UDPFragmentDefault:true}) 判定 isEmpty
+- 官方：https://github.com/SagerNet/sing-box/blob/dev/common/dialer/detour.go
 
 ### `implicit_default_http_client`
 

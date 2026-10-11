@@ -126,6 +126,17 @@ local/                        ← 【不提交】本机真实节点配置（.git
 5. 把这次踩坑写回对应文档
 ```
 
+**分岔点：错误是 check 阶段还是 run 阶段？**
+
+- `sing-box check -c` 就能报的 → 字段名/类型/枚举问题，直接查矩阵。
+- **`check` exit=0，但 `run` 启动即 FATAL** → 属于初始化期问题。已收录的典型：
+  `FATAL ... initialize rule-set[n]: ... detour to an empty direct outbound makes no sense`。
+  这是「下载用的 direct 出站是空的」。处理：给 `direct-download` 加
+  `domain_resolver`（或 `bind_interface` / `inet4_bind_address` / `routing_mark`）。
+  **`domain_strategy` / `network_strategy` 不算数**（已 `schema:"omit"`）。
+- 修完必须跑 `python tools/audit.py --run --run-seconds 20` 复现一次，确认不再有 `FATAL`；
+  静态检查 + `check` + `run` 三层都过才算修完。
+
 ## 4. 校验命令
 
 ```bash
@@ -137,10 +148,18 @@ python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 # 只跑 sing-box 官方 check
 sing-box check -c profiles/1.14/ios-lazy.json
 
+# ★ 交付 / 排错前必跑：真启动一次，抓 check 看不见的启动期 FATAL
+#   （会自动把 tun 入站临时换成 mixed、cache_file 指到临时目录；会真的连网拉规则集）
+python tools/audit.py --run --run-seconds 20
+
 # 上游巡检 / 重新生成人读版矩阵
 python tools/upgrade-check.py
 python tools/gen-docs.py
 ```
+
+> **铁律：`sing-box check` 只反序列化、不初始化。**
+> “check 全绿”**不等于**“能启动”。空的 direct 出站、规则集下不下来、
+> 初始化期的引用问题，check 一律 exit=0。交付前至少跑一次 `--run`。
 
 `audit.py` 退出码：`0` 全通过，`1` 有 ERROR（禁止交付）。
 WARN 可以交付，但必须在回复里向用户说明。
