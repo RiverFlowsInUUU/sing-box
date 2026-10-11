@@ -1,0 +1,104 @@
+name: audit
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 每周一 03:00 UTC 跑一次上游巡检，有新正式版就开 issue
+    - cron: "0 3 * * 1"
+
+jobs:
+  audit:
+    name: 配置门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 读取锁定的 sing-box 版本
+        id: ver
+        run: |
+          echo "version=$(cut -d' ' -f1 singbox_version.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: 安装对应版本的 sing-box
+        run: |
+          set -e
+          V="${{ steps.ver.outputs.version }}"
+          URL="https://github.com/SagerNet/sing-box/releases/download/v${V}/sing-box-${V}-linux-amd64.tar.gz"
+          echo "下载 $URL"
+          curl -fsSL "$URL" -o /tmp/sb.tar.gz
+          tar -xzf /tmp/sb.tar.gz -C /tmp
+          install -m 755 "/tmp/sing-box-${V}-linux-amd64/sing-box" /usr/local/bin/sing-box
+          sing-box version
+
+      - name: 结构 / 废弃字段 / 平台能力 / 引用完整性 门禁
+        run: python tools/audit.py
+
+      - name: 校验配置 JSON 可被内核解码
+        run: |
+          for f in profiles/*/*.json; do
+            echo "== $f"
+            sing-box check -c "$f"
+          done
+
+      - name: 人读版矩阵是否与 JSON 同步
+        run: |
+          python tools/gen-docs.py
+          if ! git diff --quiet -- docs/VERSION-MATRIX.md; then
+            echo "::error::docs/VERSION-MATRIX.md 与 docs/version-matrix.json 不同步，请本地运行 python tools/gen-docs.py 后提交"
+            git --no-pager diff -- docs/VERSION-MATRIX.md
+            exit 1
+          fi
+
+  upstream-drift:
+    name: 上游巡检（是否有新正式版）
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      issues: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 巡检
+        id: check
+        run: |
+          set +e
+          python tools/upgrade-check.py --report /tmp/report.md
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: 有新正式版就开 issue
+        if: steps.check.outputs.code == '1'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/report.md', 'utf8');
+            const title = `sing-box 上游巡检：需要处理的变更（${new Date().toISOString().slice(0,10)}）`;
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'upstream-drift'
+            });
+            if (issues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issues[0].number, body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['upstream-drift']
+              });
+            }

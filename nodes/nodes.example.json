@@ -1,0 +1,84 @@
+{
+  "_comment": "节点书写示例。真实节点不要提交到仓库 —— 这份文件只示范『一个节点在配置里长什么样』，以及它在哪个分流组。",
+  "_how_to_use": "用户给你分享链接时，按 docs/PROTOCOL-MAPPING.md 把链接翻译成下面这种对象，追加到 profiles/<版本>/<平台>-lazy.json 的 outbounds[]，再把 tag 加进目标分流组的 outbounds 数组。",
+  "reserved_tags": ["Proxy", "AI", "AD", "Auto", "direct", "block"],
+  "tag_naming": "建议 <地区>-<协议>-<序号>，例如 hk-hysteria2-01、us-vless-reality-01。tag 里可以用 emoji，但同一配置内不得重复。",
+  "examples": {
+    "vless_reality": {
+      "type": "vless",
+      "tag": "us-vless-reality-01",
+      "server": "node-01.example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000001",
+      "flow": "xtls-rprx-vision",
+      "packet_encoding": "xudp",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.example.com",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": {
+          "enabled": true,
+          "public_key": "REPLACE_WITH_REALITY_PUBLIC_KEY_BASE64URL",
+          "short_id": "0123456789abcdef"
+        }
+      },
+      "_from_link": "vless://<uuid>@node-01.example.com:443?encryption=none&security=reality&sni=www.example.com&fp=chrome&pbk=<public_key>&sid=0123456789abcdef&flow=xtls-rprx-vision&type=tcp#US-Reality-01"
+    },
+    "vmess_ws_tls": {
+      "type": "vmess",
+      "tag": "jp-vmess-ws-01",
+      "server": "node-02.example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-4000-8000-000000000002",
+      "security": "auto",
+      "alter_id": 0,
+      "tls": { "enabled": true, "server_name": "cdn.example.com" },
+      "transport": {
+        "type": "ws",
+        "path": "/ws",
+        "headers": { "Host": "cdn.example.com" }
+      },
+      "_from_link": "vmess://<base64 of {\"v\":\"2\",\"ps\":\"JP-WS-01\",\"add\":\"node-02.example.com\",\"port\":\"443\",\"id\":\"<uuid>\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"cdn.example.com\",\"path\":\"/ws\",\"tls\":\"tls\",\"sni\":\"cdn.example.com\"}>"
+    },
+    "trojan": {
+      "type": "trojan",
+      "tag": "sg-trojan-01",
+      "server": "node-03.example.com",
+      "server_port": 443,
+      "password": "REPLACE_WITH_PASSWORD",
+      "tls": { "enabled": true, "server_name": "node-03.example.com" },
+      "_from_link": "trojan://<password>@node-03.example.com:443?sni=node-03.example.com#SG-Trojan-01"
+    },
+    "hysteria2": {
+      "type": "hysteria2",
+      "tag": "us-hysteria2-01",
+      "server": "node-04.example.com",
+      "server_port": 443,
+      "password": "REPLACE_WITH_PASSWORD",
+      "up_mbps": 0,
+      "down_mbps": 0,
+      "tls": { "enabled": true, "server_name": "node-04.example.com" },
+      "_from_link": "hysteria2://<password>@node-04.example.com:443?sni=node-04.example.com#US-Hy2-01",
+      "_note": "若链接里是 user:pass 形式，官方客户端常把整串当密码；拿不准就问用户。用 mport= 时写 server_ports，不要与 server_port 同用。"
+    },
+    "shadowsocks_2022": {
+      "type": "shadowsocks",
+      "tag": "hk-ss2022-01",
+      "server": "node-05.example.com",
+      "server_port": 8388,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "REPLACE_WITH_BASE64_16BYTES",
+      "_from_link": "ss://MjAyMi1ibGFrZTMtYWVzLTEyOC1nY206PHBhc3N3b3JkPg==@node-05.example.com:8388#HK-SS2022-01",
+      "_note": "2022 系列的密码必须是 base64；aes-128 需要解码后 16 字节，aes-256 需要 32 字节，否则 FATAL decode key: illegal base64 data。"
+    }
+  },
+  "grouping": {
+    "_comment": "节点的 tag 要加进哪个数组，由用户指定。以下是本仓库的固定分组语义。",
+    "Proxy": "普通外网流量（route.final 指向它）",
+    "AI": "AI 相关站点（geosite-ai 命中后走它）",
+    "AD": "广告拦截，数组里只能是 block / direct，禁止放代理节点",
+    "Auto": "urltest 自动测速组，建议所有代理节点都加进来，Proxy / AI 默认指向它",
+    "direct": "直连",
+    "block": "拒绝"
+  }
+}

@@ -1,0 +1,297 @@
+{
+  "_comment": "机器可读的字段生命周期矩阵。audit.py 读取本文件做门禁。改本文件前请核对 docs/upstream-deprecated.md 原文。",
+  "_schema": {
+    "kind": "deprecated | removed | platform | semantic",
+    "deprecated_in": "废弃起始正式版（不含 -alpha/-beta）",
+    "removed_in": "移除版本；正式版 >= 该版本时使用即为致命错误",
+    "path": "字段路径，[] 表示数组通配，[k=v] 表示数组内字段过滤",
+    "replacement": "替代写法",
+    "doc": "官方文档锚点"
+  },
+  "entries": [
+    {
+      "id": "tun_stack",
+      "kind": "deprecated",
+      "deprecated_in": "1.15.0",
+      "removed_in": "1.17.0",
+      "path": "inbounds[type=tun].stack",
+      "replacement": "直接删除 stack，使用 sing-tun 自带 TCP/IP 栈",
+      "doc": "https://sing-box.sagernet.org/deprecated/#tun-stack-option",
+      "note": "1.14 正式版仍合法；升到 1.15 后必须删"
+    },
+    {
+      "id": "download_detour",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "route.rule_set[].download_detour",
+      "replacement": "route.rule_set[].http_client",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-download_detour-remote-rule-set-option",
+      "note": "sing-box check 对这项完全静默（不报错不警告），只能靠本表兜住"
+    },
+    {
+      "id": "implicit_default_http_client",
+      "kind": "semantic",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "semantic": "remote_rule_set_without_http_client",
+      "replacement": "显式配置顶层 http_clients + route.default_http_client",
+      "doc": "https://sing-box.sagernet.org/deprecated/#implicit-default-http-client"
+    },
+    {
+      "id": "tls_inline_acme",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "**.tls.acme",
+      "replacement": "certificate provider（configuration/certificate/ + tls.certificate_provider）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#inline-acme-options-in-tls"
+    },
+    {
+      "id": "dns_rule_action_strategy",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "dns.rules[].strategy",
+      "replacement": "把 strategy 移到 DNS server 定义里",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-strategy-dns-rule-action-option",
+      "note": "仅当该 DNS 规则带 action 时才算 deprecated"
+    },
+    {
+      "id": "rule_set_ip_cidr_accept_empty",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "dns.rules[].rule_set_ip_cidr_accept_empty",
+      "replacement": "response matching（match_response）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-rule_set_ip_cidr_accept_empty-dns-rule-item",
+      "note": "sing-box check 会 WARN"
+    },
+    {
+      "id": "independent_cache",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "dns.independent_cache",
+      "replacement": "直接删除（DNS 缓存行为已统一）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#independent_cache-dns-option",
+      "note": "sing-box check 会 WARN"
+    },
+    {
+      "id": "store_rdrc",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "experimental.cache_file.store_rdrc",
+      "replacement": "experimental.cache_file.store_dns",
+      "doc": "https://sing-box.sagernet.org/deprecated/#store_rdrc-cache-file-option",
+      "note": "sing-box check 会 WARN"
+    },
+    {
+      "id": "dns_rule_legacy_address_filter",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "dns.rules[].ip_cidr",
+      "replacement": "match_response + 在 DNS server 上写地址过滤",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-address-filter-fields-in-dns-rules"
+    },
+    {
+      "id": "dns_rule_legacy_ip_is_private",
+      "kind": "deprecated",
+      "deprecated_in": "1.14.0",
+      "removed_in": "1.16.0",
+      "path": "dns.rules[].ip_is_private",
+      "replacement": "match_response 版 ip_is_private",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-address-filter-fields-in-dns-rules",
+      "note": "带 match_response 的写法不算 deprecated"
+    },
+    {
+      "id": "dns_legacy_server_format",
+      "kind": "removed",
+      "deprecated_in": "1.12.0",
+      "removed_in": "1.14.0",
+      "path": "dns.servers[].address",
+      "replacement": "dns.servers[].type + dns.servers[].server",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-dns-server-formats"
+    },
+    {
+      "id": "dns_rule_outbound",
+      "kind": "deprecated",
+      "deprecated_in": "1.12.0",
+      "removed_in": "1.16.0",
+      "path": "dns.rules[].outbound",
+      "replacement": "在 DNS server 上加 dial fields（如 detour / domain_resolver）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#outbound-dns-rule-item"
+    },
+    {
+      "id": "ech_legacy_fields",
+      "kind": "removed",
+      "deprecated_in": "1.12.0",
+      "removed_in": "1.13.0",
+      "path": "**.tls.ech.**",
+      "replacement": "无（改用标准库 ECH）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-ech-fields",
+      "note": "涉及 pq_signature_schemes_enabled / dynamic_record_sizing_disabled"
+    },
+    {
+      "id": "legacy_special_outbounds",
+      "kind": "info",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "replacement": "rule action",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-special-outbounds",
+      "note": "指的是把 outbounds[] 里的 block/dns 出站当作「特殊出站」来拒绝或劫持 DNS 的旧语义（已于 1.13.0 移除，改用 rule action）。注意 type:block 出站本身在 1.14 仍然合法，可用于 AD 分流组；route.rules[].action 是当前正确写法。故本条目仅存档，audit 不做路径匹配。"
+    },
+    {
+      "id": "legacy_inbound_fields",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "path": "inbounds[].sniff",
+      "replacement": "route.rules[].action = sniff",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-inbound-fields"
+    },
+    {
+      "id": "legacy_inbound_domain_strategy",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "path": "inbounds[].domain_strategy",
+      "replacement": "route.rules[].action = resolve + strategy",
+      "doc": "https://sing-box.sagernet.org/deprecated/#legacy-inbound-fields"
+    },
+    {
+      "id": "direct_override_fields",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "path": "outbounds[type=direct].override_address",
+      "replacement": "route.rules[].action = route-options + override_address",
+      "doc": "https://sing-box.sagernet.org/deprecated/#destination-override-fields-in-direct-outbound"
+    },
+    {
+      "id": "direct_override_port",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "path": "outbounds[type=direct].override_port",
+      "replacement": "route.rules[].action = route-options + override_port",
+      "doc": "https://sing-box.sagernet.org/deprecated/#destination-override-fields-in-direct-outbound"
+    },
+    {
+      "id": "wireguard_outbound",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "type_check": { "where": "outbounds", "field": "type", "equals": "wireguard" },
+      "replacement": "endpoints[].type = wireguard",
+      "doc": "https://sing-box.sagernet.org/deprecated/#wireguard-outbound"
+    },
+    {
+      "id": "tun_gso",
+      "kind": "removed",
+      "deprecated_in": "1.11.0",
+      "removed_in": "1.13.0",
+      "path": "inbounds[type=tun].gso",
+      "replacement": "直接删除",
+      "doc": "https://sing-box.sagernet.org/deprecated/#gso-option-in-tun"
+    },
+    {
+      "id": "tun_legacy_address_fields",
+      "kind": "removed",
+      "deprecated_in": "1.10.0",
+      "removed_in": "1.12.0",
+      "path": "inbounds[type=tun].inet4_address",
+      "replacement": "address（数组）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#tun-address-fields-are-merged"
+    },
+    {
+      "id": "tun_legacy_address_fields6",
+      "kind": "removed",
+      "deprecated_in": "1.10.0",
+      "removed_in": "1.12.0",
+      "path": "inbounds[type=tun].inet6_address",
+      "replacement": "address（数组）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#tun-address-fields-are-merged"
+    },
+    {
+      "id": "rule_set_ipcidr_match_source",
+      "kind": "removed",
+      "deprecated_in": "1.10.0",
+      "removed_in": "1.11.0",
+      "path": "**.rule_set_ipcidr_match_source",
+      "replacement": "rule_set_ip_cidr_match_source",
+      "doc": "https://sing-box.sagernet.org/deprecated/#match-source-rule-items-are-renamed"
+    },
+    {
+      "id": "route_rule_geosite",
+      "kind": "removed",
+      "deprecated_in": "1.8.0",
+      "removed_in": "1.12.0",
+      "path": "route.rules[].geosite",
+      "replacement": "rule_set 引用 geosite 规则集",
+      "doc": "https://sing-box.sagernet.org/deprecated/#geosite"
+    },
+    {
+      "id": "route_rule_geoip",
+      "kind": "removed",
+      "deprecated_in": "1.8.0",
+      "removed_in": "1.12.0",
+      "path": "route.rules[].geoip",
+      "replacement": "rule_set 引用 geoip 规则集",
+      "doc": "https://sing-box.sagernet.org/deprecated/#geoip"
+    },
+    {
+      "id": "clash_api_cache_file",
+      "kind": "removed",
+      "deprecated_in": "1.8.0",
+      "removed_in": "1.12.0",
+      "path": "experimental.clash_api.cache_file",
+      "replacement": "experimental.cache_file",
+      "doc": "https://sing-box.sagernet.org/deprecated/#cache-file-and-related-features-in-clash-api"
+    },
+    {
+      "id": "shadowsocksr_outbound",
+      "kind": "removed",
+      "deprecated_in": "1.5.0",
+      "removed_in": "1.6.0",
+      "type_check": { "where": "outbounds", "field": "type", "equals": "shadowsocksr" },
+      "replacement": "无（sing-box 已不支持 SSR）",
+      "doc": "https://sing-box.sagernet.org/deprecated/#shadowsocksr"
+    },
+    {
+      "id": "platform_strict_route",
+      "kind": "platform",
+      "platforms": ["android", "ios"],
+      "path": "inbounds[type=tun].strict_route",
+      "replacement": "删除该字段（移动端未实现）",
+      "doc": "https://sing-box.sagernet.org/clients/android/features/",
+      "note": "sing-box check 不报错，但移动端无效果"
+    },
+    {
+      "id": "platform_process_rule",
+      "kind": "platform",
+      "platforms": ["android"],
+      "path": "**.process_name",
+      "replacement": "在移动端改用 package_name / include_package / exclude_package",
+      "doc": "https://sing-box.sagernet.org/clients/android/features/"
+    },
+    {
+      "id": "platform_process_path_rule",
+      "kind": "platform",
+      "platforms": ["android", "ios"],
+      "path": "**.process_path",
+      "replacement": "移动端不可用",
+      "doc": "https://sing-box.sagernet.org/clients/apple/features/"
+    },
+    {
+      "id": "platform_uid_rule",
+      "kind": "platform",
+      "platforms": ["android", "ios"],
+      "path": "**.user_id",
+      "replacement": "Android 用 package_name；Apple 仅 macOS 独立版/iOS 越狱版可用",
+      "doc": "https://sing-box.sagernet.org/clients/apple/features/"
+    }
+  ]
+}

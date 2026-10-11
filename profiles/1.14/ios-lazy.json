@@ -1,0 +1,331 @@
+{
+  "$schema": "https://sing-box.sagernet.org/schema.json",
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "dns-bootstrap",
+        "server": "223.5.5.5"
+      },
+      {
+        "type": "https",
+        "tag": "dns-cn",
+        "server": "223.5.5.5",
+        "path": "/dns-query"
+      },
+      {
+        "type": "https",
+        "tag": "dns-proxy",
+        "server": "8.8.8.8",
+        "path": "/dns-query",
+        "detour": "Proxy"
+      }
+    ],
+    "rules": [
+      {
+        "query_type": [
+          "AAAA",
+          "HTTPS",
+          "SVCB"
+        ],
+        "action": "predefined",
+        "rcode": "NOERROR"
+      },
+      {
+        "domain_suffix": [
+          ".lan",
+          ".local",
+          ".localdomain",
+          ".home.arpa"
+        ],
+        "action": "route",
+        "server": "dns-cn"
+      },
+      {
+        "rule_set": [
+          "geosite-private"
+        ],
+        "action": "route",
+        "server": "dns-cn"
+      },
+      {
+        "rule_set": [
+          "geosite-cn"
+        ],
+        "action": "route",
+        "server": "dns-cn"
+      }
+    ],
+    "final": "dns-proxy",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "mtu": 9000,
+      "auto_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "Node-01",
+      "server": "node-01.example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000001",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "node-01.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "2MBXc1NpsWcw0c_1jhOP0K9idKDh7I4em7CHGhKvvWg",
+          "short_id": "0123456789abcdef"
+        }
+      }
+    },
+    {
+      "type": "vmess",
+      "tag": "Node-02",
+      "server": "node-02.example.com",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000002",
+      "security": "auto",
+      "alter_id": 0,
+      "tls": {
+        "enabled": true,
+        "server_name": "node-02.example.com"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/",
+        "headers": {
+          "Host": "node-02.example.com"
+        }
+      }
+    },
+    {
+      "type": "trojan",
+      "tag": "Node-03",
+      "server": "node-03.example.com",
+      "server_port": 443,
+      "password": "REPLACE_WITH_TROJAN_PASSWORD",
+      "tls": {
+        "enabled": true,
+        "server_name": "node-03.example.com"
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "Node-04",
+      "server": "node-04.example.com",
+      "server_port": 52341,
+      "password": "REPLACE_WITH_HY2_PASSWORD",
+      "up_mbps": 0,
+      "down_mbps": 0,
+      "tls": {
+        "enabled": true,
+        "server_name": "node-04.example.com",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "Node-05",
+      "server": "node-05.example.com",
+      "server_port": 8388,
+      "method": "2022-blake3-aes-128-gcm",
+      "password": "qpTnNUOgzPiKf2CV+QLhRA=="
+    },
+    {
+      "type": "urltest",
+      "tag": "Auto",
+      "outbounds": [
+        "Node-01",
+        "Node-02",
+        "Node-03",
+        "Node-04",
+        "Node-05"
+      ],
+      "url": "http://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 100
+    },
+    {
+      "type": "selector",
+      "tag": "Proxy",
+      "outbounds": [
+        "Auto",
+        "Node-01",
+        "Node-02",
+        "Node-03",
+        "Node-04",
+        "Node-05"
+      ],
+      "default": "Auto"
+    },
+    {
+      "type": "selector",
+      "tag": "AI",
+      "outbounds": [
+        "Auto",
+        "Node-01",
+        "Node-02",
+        "Node-03",
+        "Node-04",
+        "Node-05"
+      ],
+      "default": "Auto"
+    },
+    {
+      "type": "selector",
+      "tag": "AD",
+      "outbounds": [
+        "block",
+        "direct"
+      ],
+      "default": "block"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      },
+      {
+        "ip_version": 6,
+        "action": "reject"
+      },
+      {
+        "ip_is_private": true,
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-ads"
+        ],
+        "action": "route",
+        "outbound": "AD"
+      },
+      {
+        "rule_set": [
+          "geosite-ai"
+        ],
+        "action": "route",
+        "outbound": "AI"
+      },
+      {
+        "rule_set": [
+          "geosite-private"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-cn"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geoip-cn"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      }
+    ],
+    "final": "Proxy",
+    "default_domain_resolver": {
+      "server": "dns-bootstrap"
+    },
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geosite-private",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/private.srs",
+        "http_client": "ruleset-dl",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-ads",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
+        "http_client": "ruleset-dl",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-ai",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ai-!cn.srs",
+        "http_client": "ruleset-dl",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/cn.srs",
+        "http_client": "ruleset-dl",
+        "update_interval": "7d"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geoip/cn.srs",
+        "http_client": "ruleset-dl",
+        "update_interval": "7d"
+      }
+    ]
+  },
+  "http_clients": [
+    {
+      "tag": "ruleset-dl",
+      "detour": "direct",
+      "connect_timeout": "10s",
+      "idle_timeout": "30s"
+    }
+  ],
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "cache.db",
+      "cache_id": "sb-template-1.14-ios",
+      "store_dns": true
+    }
+  }
+}

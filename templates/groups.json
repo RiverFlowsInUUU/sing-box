@@ -1,0 +1,45 @@
+{
+  "_comment": "固定分流组骨架。这些出站必须原样存在于每个 profile 里；只往它们的 outbounds 数组里加节点 tag，不要改语义。",
+  "outbounds": [
+    {
+      "type": "urltest",
+      "tag": "Auto",
+      "outbounds": [],
+      "url": "http://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 100
+    },
+    {
+      "type": "selector",
+      "tag": "Proxy",
+      "outbounds": ["Auto"],
+      "default": "Auto"
+    },
+    {
+      "type": "selector",
+      "tag": "AI",
+      "outbounds": ["Auto"],
+      "default": "Auto"
+    },
+    {
+      "type": "selector",
+      "tag": "AD",
+      "outbounds": ["block", "direct"],
+      "default": "block"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "_rules_of_thumb": [
+    "Auto 里放所有代理节点，Proxy / AI 默认指向 Auto，这样加节点只需改一处",
+    "Proxy 里可以额外放 Auto 之外的指定节点，供用户手动切",
+    "AD 的 outbounds 永远只有 block 和 direct（tools/audit.py 会检查）",
+    "tag 名 Proxy / AI / AD / Auto / direct / block 是保留名，节点不得占用"
+  ]
+}

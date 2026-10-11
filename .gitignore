@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+# 本地跑配置时产生的缓存与日志，不要提交
+*.db
+*.log
