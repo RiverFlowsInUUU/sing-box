@@ -49,7 +49,7 @@ tools/
   audit.py                    门禁：结构 + 废弃字段 + 平台能力 + sing-box check
   upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
-archive/<大版本>/               归档目录：旧版本配置只归档，永不删除
+archive/                      旧大版本配置归档
 ```
 
 ## 这套仓库解决什么问题
@@ -92,19 +92,19 @@ python tools/upgrade-check.py
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
 7. 仓库里**不存真实节点**
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
-9. **旧版本配置只归档不删除**，移进 `archive/<大版本>/`
 
 ## 常见坑
 
 | 坑 | 正确做法 |
 |---|---|
-| 规则集用 GitHub raw，国内打不开 | 用 `https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/…` |
+| 规则集用 GitHub raw，国内打不开 | 用 `https://testingcf.jsdelivr.net/gh/…`（CDN 前缀统一）|
 | `rule_set` 写了 `download_detour` | 已废弃，改用顶层 `http_clients` + 规则集上的 `http_client` |
 | `cache_file.path` 写 `../cache/cache.db` | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL`。写 `cache.db` |
 | reality `public_key` 随便填占位 | 必须是合法 base64url，否则 `FATAL invalid public_key` |
 | SS 2022 密码随便填 | 必须是合法 base64（aes-128 解 16 字节、aes-256 解 32 字节） |
 | iOS 配置里留了 `strict_route` | Apple 客户端未实现，删掉 |
-| 升级后把旧 `profiles/1.14/` 删了 | 不删。`git mv profiles/1.14 archive/1.14`，改坏了还能翻回去对照 |
+| 广告拦截用了 `MetaCubeX` 的 `category-ads-all` | 改用 Jinx 的 `jinx-ads` + 秋风 `awanue-ads`，并配套 `jinx-direct` 放行集 |
+| 规则集顺序随意摆 | 顺序错了等于没加：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 
 ## 版本
 

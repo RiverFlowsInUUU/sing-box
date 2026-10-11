@@ -255,6 +255,81 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
                         rep.warn(e["id"], msg + f"（隐式行为将于 {rem} 移除）")
 
 
+def _audit_jinx(route, rep: Report):
+    """Jinx 广告/放行规则集的成对性与顺序（本仓库强规范）。
+
+    官方要求（https://github.com/RiverFlowsInUUU/Jinx#-规则顺序）：
+        1 jinx-direct   → direct  白名单先放行
+        2 jinx-ads      → AD      拦截
+        3 awanue-ads    → AD      拦截（秋风判定不同，会拦掉 Jinx 白名单的 8 个域，必须排后面）
+        4 geosite-cn    → direct  常规分流，必须排在拦截之后
+    """
+    rss = route.get("rule_set") or []
+    rs_tags = {r.get("tag") for r in rss if isinstance(r, dict)}
+    rules = route.get("rules") or []
+
+    tags_present = [t for t in ("jinx-direct", "jinx-ads", "awanue-ads") if t in rs_tags]
+    if not tags_present:
+        return
+    if len(tags_present) != 3:
+        missing = [t for t in ("jinx-direct", "jinx-ads", "awanue-ads") if t not in rs_tags]
+        rep.error(
+            "jinx_incomplete",
+            f"Jinx 规则集不完整：缺 {missing}。三者必须同时存在，"
+            "jinx-ads / awanue-ads 必须跟 jinx-direct 放行集配套使用。",
+        )
+
+    # URL 必须指向 Jinx / AWAvenue 官方仓库
+    expect = {
+        "jinx-direct": "RiverFlowsInUUU/Jinx@",
+        "jinx-ads": "RiverFlowsInUUU/Jinx@",
+        "awanue-ads": "TG-Twilight/AWAvenue-Ads-Rule@",
+    }
+    for i, rs in enumerate(rss):
+        tag = rs.get("tag")
+        if tag in expect and expect[tag] not in (rs.get("url") or ""):
+            rep.error(
+                "jinx_url",
+                f"route.rule_set[{i}] ({tag}) 的 url 未指向约定仓库（应包含 {expect[tag]}）：{rs.get('url')}",
+            )
+        if tag in expect and rs.get("format") != "source":
+            rep.error(
+                "jinx_format",
+                f"route.rule_set[{i}] ({tag}) 必须是 format='source'（Jinx 发布的是 JSON 源格式，非 .srs）",
+            )
+
+    # 广告规则集不得出现在 dns.rules 的 rule_set 里（那是 DNS 分流，不是拦截）
+    for i, r in enumerate((route.get("rules") or [])):
+        if not isinstance(r, dict):
+            continue
+        for t in ("jinx-ads", "awanue-ads"):
+            if t in (r.get("rule_set") or []):
+                ob = r.get("outbound")
+                if ob != "AD" and r.get("action") != "reject":
+                    rep.error(
+                        "jinx_ads_target",
+                        f"route.rules[{i}] 把 {t} 指向了 {ob or r.get('action')!r}，"
+                        "广告拦截集只能落到 AD 组或直接 reject",
+                    )
+
+    # 顺序：直接用 rule_set 在 route.rules 里的首次出现位置判定
+    def first_pos(tag):
+        for i, r in enumerate(rules):
+            if isinstance(r, dict) and tag in (r.get("rule_set") or []):
+                return i
+        return None
+
+    pos = {t: first_pos(t) for t in ("jinx-direct", "jinx-ads", "awanue-ads", "geosite-cn")}
+    order = [t for t in ("jinx-direct", "jinx-ads", "awanue-ads", "geosite-cn") if pos[t] is not None]
+    for a, b in zip(order, order[1:]):
+        if pos[a] > pos[b]:
+            rep.error(
+                "jinx_order",
+                f"规则顺序错误：{a}（第 {pos[a]} 条）必须排在 {b}（第 {pos[b]} 条）之前。"
+                "国内广告域名多数也算大陆域名，geosite-cn 排前面会先放行、广告规则失效。",
+            )
+
+
 def audit_repo_rules(cfg, rep: Report):
     """本仓库自己的规范（与上游无关）。"""
 
@@ -323,6 +398,10 @@ def audit_repo_rules(cfg, rep: Report):
                 "ruleset_format",
                 f"route.rule_set[{i}] url 未以 .srs/.json 结尾且未写 format：{url}",
             )
+
+    # 2b) Jinx 广告/放行规则集：必须成对存在，且顺序必须正确
+    #     顺序错了等于没加：geosite-cn 排到拦截之前会先命中放行，广告规则再无机会执行。
+    _audit_jinx(route, rep)
 
     # 3) 出站 tag 唯一 + 引用完整性
     outs = cfg.get("outbounds", [])

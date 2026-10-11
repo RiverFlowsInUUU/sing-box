@@ -231,7 +231,21 @@
       },
       {
         "rule_set": [
-          "geosite-ads"
+          "jinx-direct"
+        ],
+        "action": "route",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "jinx-ads"
+        ],
+        "action": "route",
+        "outbound": "AD"
+      },
+      {
+        "rule_set": [
+          "awanue-ads"
         ],
         "action": "route",
         "outbound": "AD"
@@ -280,11 +294,27 @@
       },
       {
         "type": "remote",
-        "tag": "geosite-ads",
-        "format": "binary",
-        "url": "https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/geo/geosite/category-ads-all.srs",
+        "tag": "jinx-direct",
+        "format": "source",
+        "url": "https://testingcf.jsdelivr.net/gh/RiverFlowsInUUU/Jinx@main/sing-box-direct.json",
         "http_client": "ruleset-dl",
-        "update_interval": "7d"
+        "update_interval": "1d"
+      },
+      {
+        "type": "remote",
+        "tag": "jinx-ads",
+        "format": "source",
+        "url": "https://testingcf.jsdelivr.net/gh/RiverFlowsInUUU/Jinx@main/sing-box-ads.json",
+        "http_client": "ruleset-dl",
+        "update_interval": "1d"
+      },
+      {
+        "type": "remote",
+        "tag": "awanue-ads",
+        "format": "source",
+        "url": "https://testingcf.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Singbox.json",
+        "http_client": "ruleset-dl",
+        "update_interval": "1d"
       },
       {
         "type": "remote",

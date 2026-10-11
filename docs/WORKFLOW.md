@@ -20,6 +20,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 | 已废弃未移除字段 | `docs/version-matrix.json` + `tools/audit.py` |
 | 平台能力差异 | `docs/PLATFORM-MATRIX.md` + `tools/audit.py` |
 | 引用完整性（出站/规则集/DNS server 不存在） | `tools/audit.py`（`check` 不校验！） |
+| 规则集**顺序**（放行/拦截/分流先后错了等于没加） | `tools/audit.py` 的 Jinx 顺序检查 |
 | 上游又改了 | `tools/upgrade-check.py` |
 
 ## 一、目录职责
@@ -40,7 +41,7 @@ templates/                 片段骨架（节点、分流组）
 tools/audit.py             门禁
 tools/upgrade-check.py     升级巡检
 tools/gen-docs.py          由 JSON 生成人读版矩阵
-archive/                   归档目录，按大版本分子目录（只归档，不删除）
+archive/                   旧大版本配置归档
 ```
 
 **为什么 `profiles/` 按大版本分目录**：1.14 的配置在 1.15 上可能直接 `FATAL`（例如 1.17 移除
@@ -90,6 +91,8 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
    建议同时加进 `Auto`（urltest）——除非用户明确说不要。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
+   其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
+   `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
 4. `AD` 分组**只允许** `block` 和 `direct`，永远不要把代理节点放进去。
 
 ### A5. 跑门禁
@@ -198,20 +201,6 @@ echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
 python tools/upgrade-check.py --write    # 更新上游文档快照
 ```
 
-### B6. 归档旧版（**只归档，不删除**）
-
-一旦配置目录升到新的大版本，旧的 profile 目录移入 `archive/<大版本>/`：
-
-```bash
-git mv profiles/1.14 archive/1.14
-```
-
-规矩：
-
-- **永不删除历史配置**，只归档。改坏了随时能翻回去对照。
-- `archive/` 下按 sing-box 大版本建子目录（`archive/1.14/`、`archive/1.15/`…）。
-- 每个归档子目录最好留一份 `README.md`，写清楚“为什么不再维护、替代文件是哪个”。
-
 ## 四、流程 C：用户反馈"跑不起来"
 
 按报错形态分流：
@@ -236,7 +225,6 @@ git mv profiles/1.14 archive/1.14
 3. 不确定"什么时候移除"的，`removed_in` 留空或写 `null`，别猜。
 4. 每条都要有 `doc` 链接。
 5. 改完必须 `python tools/audit.py` 全绿才算完。
-6. **只归档不删除**：升级到新大版本时旧的 `profiles/<版本>/` 移入 `archive/<版本>/`，历史配置永远保留。
 
 ## 六、常见误区
 
@@ -246,6 +234,7 @@ git mv profiles/1.14 archive/1.14
 | "字段没了内核会提示" | 未知字段/已移除字段会，**已废弃未移除的常常不会** |
 | "iOS 和 Windows 配置可以通用" | 大部分可以，但 `strict_route`、`clash_api`、TUN 地址这些要分开 |
 | "规则集用 GitHub raw 就行" | 国内经常打不开，必须走 jsdelivr CDN，且配置里显式指定下载用的 `http_client` |
+| "广告用 `category-ads-all` 就够了" | 本仓库用 Jinx (`jinx-ads`) + 秋风 (`awanue-ads`)，且**必须**配 `jinx-direct` 放行集，顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| "规则顺序无所谓" | 顺序错了等于没加。`geosite-cn` 排在拦截之前，国内广告域名会先命中直连，广告规则再无机会执行 |
 | "`cache_file.path` 可以写 `../cache/cache.db`" | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL` 起不来。写 `cache.db` |
 | "分流组越多越好" | 本仓库只要 `Proxy` / `AI` / `AD` 三个 + `direct` / `block` |
-| "旧版本配置没用了可以删" | 不删。移进 `archive/<大版本>/`，改坏了还能翻回去对照 |

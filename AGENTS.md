@@ -23,11 +23,40 @@
 | 1 | **只面向正式版**。现行正式版记在仓库根 `singbox_version.txt`；不用 `-alpha` / `-beta` / `-rc` 字段去写配置 |
 | 2 | **未知字段 = 致命错误**。sing-box 对未知字段直接 `FATAL ... json: unknown field`，启动失败 |
 | 3 | **已移除字段 = 致命错误**。见 `docs/VERSION-MATRIX.md` 的"已移除"列 |
-| 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
+| 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理）、`AI`、`AD`；再加 `direct` 与 `block` 两个出站。国内/私有/广告**不出组**，用规则直连或落 AD |
 | 7 | **禁止写入真实节点到仓库**。仓库里的配置一律用占位值（`node-01.example.com`） |
-| 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`，统一 `https://testingcf.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@sing/…` |
+| 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
+| 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
+
+### 固定规则集清单（不要自行改动）
+
+| tag | 用途 | 格式 | 来源 | update_interval |
+|---|---|---|---|---|
+| `jinx-direct` | 白名单放行（47 条，包含被国内大厂 SDK 误拦的合法域名） | `source` | `RiverFlowsInUUU/Jinx@main/sing-box-direct.json` | `1d` |
+| `jinx-ads` | 广告拦截（3901 条） | `source` | `RiverFlowsInUUU/Jinx@main/sing-box-ads.json` | `1d` |
+| `awanue-ads` | 广告拦截补充（秋风规则，965 条） | `source` | `TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Singbox.json` | `1d` |
+| `geosite-private` | 局域网/私有域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
+| `geosite-ai` | AI 服务域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
+| `geosite-cn` | 中国大陆域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
+| `geoip-cn` | 中国大陆 IP | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
+
+全部 URL 前缀统一 `https://testingcf.jsdelivr.net/gh/`，全部带 `"http_client": "ruleset-dl"`。
+
+**顺序铁律**（Jinx 官方要求，实测验证过为什么）：
+
+```
+jinx-direct     → outbound direct      ✅ 白名单放行，必须最先
+jinx-ads        → outbound AD          🚫 拦截
+awanue-ads      → outbound AD          🚫 拦截（必须排在 jinx-ads 之后）
+geosite-cn      → outbound direct      🚦 常规分流，必须在拦截之后
+```
+
+原因：国内广告域名多数同时也属「中国大陆域名」。`geosite-cn` 若排到拦截之前会先命中放行，广告规则再无机会执行。
+秋风（`awanue-ads`）与 Jinx 判定标准不同，**会拦掉 Jinx 白名单里的 8 个域**，所以必须排在 Jinx 之后，
+且前面要有 `jinx-direct` 兵底。
 
 ## 2. 仓库结构
 
@@ -53,7 +82,7 @@ tools/
   audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + sing-box check
   upgrade-check.py            ← 上游有新正式版/新废弃项时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md
-archive/<大版本>/             ← 旧版本配置归档（按 sing-box 大版本分目录，只归档不删除）
+archive/<大版本>/             ← 旧版本配置归档（只归档不删除）
 ```
 
 ## 3. 三种典型任务
