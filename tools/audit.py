@@ -30,6 +30,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "docs" / "version-matrix.json"
 PROFILES = ROOT / "profiles"
+PLACEHOLDER_DOMAINS = (".example.com", ".example.org", ".example.net", ".invalid", ".test", ".localhost")
 ALLOWED_RULESET_PREFIXES = (
     "https://testingcf.jsdelivr.net/gh/",
     "https://cdn.jsdelivr.net/gh/",
@@ -350,6 +351,26 @@ def audit_repo_rules(cfg, rep: Report):
                 f"experimental.cache_file.path = {path!r} 含 '..'；"
                 "sing-box 不会自动创建父目录，父目录不存在会直接 FATAL 启动失败",
             )
+
+    # 1b) profiles/ 下必须是占位值——公开仓库永不存真实节点
+    try:
+        rel = Path(str(rep.name)).resolve().relative_to(ROOT)
+    except ValueError:
+        rel = Path(str(rep.name))
+    if rel.parts and rel.parts[0] == "profiles":
+        for i, ob in enumerate(cfg.get("outbounds", [])):
+            if not isinstance(ob, dict):
+                continue
+            srv = ob.get("server")
+            if not isinstance(srv, str) or not srv:
+                continue
+            if not srv.endswith(PLACEHOLDER_DOMAINS):
+                rep.error(
+                    "placeholder_server",
+                    f"outbounds[{i}] ({ob.get('tag')}) 的 server={srv!r} 不是占位域名。"
+                    "profiles/ 只允许 xxx.example.com 这类占位值；"
+                    "含真实节点的配置请放仓库外的 local/ 目录，不要提交",
+                )
 
     # 2) 远程规则集必须走允许的 CDN，且必须指定 http_client
     route = cfg.get("route", {})

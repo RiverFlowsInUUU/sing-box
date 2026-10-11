@@ -26,7 +26,7 @@
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理）、`AI`、`AD`；再加 `direct` 与 `block` 两个出站。国内/私有/广告**不出组**，用规则直连或落 AD |
-| 7 | **禁止写入真实节点到仓库**。仓库里的配置一律用占位值（`node-01.example.com`） |
+| 7 | **任何时候仓库都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。`audit.py` 有 `placeholder_server` 检查兜底 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
@@ -83,6 +83,7 @@ tools/
   upgrade-check.py            ← 上游有新正式版/新废弃项时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md
 archive/<大版本>/             ← 旧版本配置归档（只归档不删除）
+local/                        ← 【不提交】本机真实节点配置（.gitignore 已忽略）
 ```
 
 ## 3. 三种典型任务
@@ -97,6 +98,11 @@ archive/<大版本>/             ← 旧版本配置归档（只归档不删除�
 5. 把 outbound tag 加进用户指定的分流组（Proxy / AI / AD）的 outbounds 数组
 6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
 7. 输出完整 JSON（不是 diff、不是片段）
+
+**产物落哪里**（关键）：
+- 只含占位节点的骨架 → `profiles/<ver>/<platform>-lazy.json`
+- **含真实节点的成品 → `local/<platform>.json`，绝不写进 `profiles/`，绝不提交**
+- 给用户的成品可以放在仓库外任意位置（例如 `android-lazy-test.json`）再发送
 ```
 
 ### 任务 B：上游发布新正式版
@@ -156,5 +162,9 @@ WARN 可以交付，但必须在回复里向用户说明。
 
 ## 6. 节点占位规则
 
-生成给用户之前可以先用占位；一旦用户给了真实链接，**替换占位、不要新增重复节点**。
-仓库内提交的文件永远保持占位值。
+- `profiles/` 里的文件**永远是占位值**（`node-0X.example.com`），它只是骨架与格式参考。
+- 用户给了真实分享链接后，**替换占位、不要新增重复节点**，产物写进 `local/<platform>.json`。
+- `local/` 已列入 `.gitignore`；提交前用 `git status` 复核，并可用
+  `git grep -n -f <(printf '%s\n' "$真实域名")` 之类方式确认没有真实节点混进暂存区。
+- 判断标准很简单：`python tools/audit.py` 对 `profiles/` 下任何文件报
+  `placeholder_server` 就是错误，必须把真实节点挪出 `profiles/`。

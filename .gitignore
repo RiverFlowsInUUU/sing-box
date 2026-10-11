@@ -5,3 +5,5 @@ __pycache__/
 # 本地跑配置时产生的缓存与日志，不要提交
 *.db
 *.log
+local/
+local/test-input/

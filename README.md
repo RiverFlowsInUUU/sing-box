@@ -90,7 +90,7 @@ python tools/upgrade-check.py
 4. **`check` 通过 ≠ 配置正确**
 5. 平台能力不同，iOS/Android **没有** `strict_route`
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
-7. 仓库里**不存真实节点**
+7. **任何时候仓库都不放真实节点**——含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
 
 ## 常见坑
@@ -103,6 +103,7 @@ python tools/upgrade-check.py
 | reality `public_key` 随便填占位 | 必须是合法 base64url，否则 `FATAL invalid public_key` |
 | SS 2022 密码随便填 | 必须是合法 base64（aes-128 解 16 字节、aes-256 解 32 字节） |
 | iOS 配置里留了 `strict_route` | Apple 客户端未实现，删掉 |
+| 把用户给的真实节点直接写进 `profiles/` 并提交 | 真实节点写 `local/<platform>.json`（不提交）；`audit.py` 的 `placeholder_server` 检查会报 ERROR 拦住 |
 | 广告拦截用了 `MetaCubeX` 的 `category-ads-all` | 改用 Jinx 的 `jinx-ads` + 秋风 `awanue-ads`，并配套 `jinx-direct` 放行集 |
 | 规则集顺序随意摆 | 顺序错了等于没加：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 

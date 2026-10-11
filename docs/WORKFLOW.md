@@ -35,7 +35,8 @@ docs/version-matrix.json   机器可读字段生命周期（audit.py 的依据�
 docs/VERSION-MATRIX.md     上表的人读版（由 tools/gen-docs.py 生成）
 docs/schema.json           sing-box 官方 schema（字段白名单）
 docs/upstream-*.md         上游 deprecated / migration / changelog / tun 的本地快照
-profiles/<大版本>/          可运行配置（占位节点），按平台分文件
+profiles/<大版本>/          可运行配置（**占位节点**），按平台分文件
+local/                      【不提交】本机真实节点配置（.gitignore 已忽略，仅存本地）
 nodes/nodes.example.json   用户节点在该仓库里的书写示例
 templates/                 片段骨架（节点、分流组）
 tools/audit.py             门禁
@@ -48,6 +49,21 @@ archive/                   旧大版本配置归档
 `stack` 后就起不来）。按大版本分目录后，升级＝新开一个目录，旧配置原地保留、随时可回退。
 
 ## 二、流程 A：用户给节点 → 出配置（最高频）
+
+### A0. 产物落哪里（先看这条，别搞错）
+
+| 产物 | 位置 | 是否提交 |
+|---|---|---|
+| 只含占位节点的骨架 | `profiles/<ver>/<platform>-lazy.json` | ✅ 提交 |
+| **含真实节点的成品** | `local/<platform>.json` | ❌ **永不提交** |
+| 给用户下载的成品 | 仓库外任意位置（如桌面 `android-lazy-test.json`） | ❌ 不提交 |
+
+**铁律：任何时候仓库都不放真实节点，含真实节点的文件仅存留本地。**
+
+- `local/` 已写进 `.gitignore`，`git status` 看不到它。
+- `tools/audit.py` 内置 `placeholder_server` 检查：只要 `profiles/` 下出现非 `.example.com`
+  这类占位域名的 `server`，直接报 ERROR。所以"不小心把真实节点写进 profiles"会在门禁那步被挡住。
+- 提交前可再自查一遍：`git status` 应只有 `profiles/` / `docs/` / `tools/` 等预期改动。
 
 ### A1. 收集输入
 
@@ -120,7 +136,8 @@ export SINGBOX_BIN=/path/to/sing-box
 - 每个新节点**落在哪个组**
 - audit 结论（`sing-box check` 是否通过、有没有 WARN）
 - **完整 JSON**（能直接复制粘贴的那种，不要只给 diff）
-- 一句提醒：配置里的占位域名（`node-01.example.com`）必须已被替换成真实地址
+- 一句提醒：配置里的占位域名（`node-01.example.com`）必须已被替换成真实地址；
+  含真实节点的成品放 `local/`，**不要提交进仓库**
 
 ## 三、流程 B：上游发布新正式版
 
