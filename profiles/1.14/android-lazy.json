@@ -54,6 +54,21 @@
       },
       {
         "rule_set": [
+          "jinx-direct"
+        ],
+        "action": "route",
+        "server": "dns-cn"
+      },
+      {
+        "rule_set": [
+          "jinx-ads",
+          "awanue-ads"
+        ],
+        "action": "predefined",
+        "rcode": "NXDOMAIN"
+      },
+      {
+        "rule_set": [
           "geosite-cn"
         ],
         "action": "route",

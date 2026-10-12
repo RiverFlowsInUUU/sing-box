@@ -54,6 +54,21 @@
       },
       {
         "rule_set": [
+          "jinx-direct"
+        ],
+        "action": "route",
+        "server": "dns-cn"
+      },
+      {
+        "rule_set": [
+          "jinx-ads",
+          "awanue-ads"
+        ],
+        "action": "predefined",
+        "rcode": "NXDOMAIN"
+      },
+      {
+        "rule_set": [
           "geosite-cn"
         ],
         "action": "route",
@@ -356,9 +371,6 @@
       "path": "cache.db",
       "cache_id": "sb-template-1.14",
       "store_dns": true
-    },
-    "clash_api": {
-      "default_mode": "Rule"
     }
   }
 }

@@ -965,6 +965,11 @@ def audit_template(rep: Report):
 
 
 def audit_platform_caps(cfg, rep: Report, platforms):
+    """按平台能力差异检查配置。
+
+    ⚠️ 这里只能拦「配置里写了什么」的显式问题。**平台差异的完整清单在
+    docs/PLATFORM-MATRIX.md**，那份表由 audit_matrix_platform() 与三份 profile 对账。
+    """
     if {"android", "ios"} & platforms:
         for i, ib in enumerate(cfg.get("inbounds", [])):
             if ib.get("type") == "tun" and "strict_route" in ib:
@@ -972,10 +977,10 @@ def audit_platform_caps(cfg, rep: Report, platforms):
                     "platform_strict_route",
                     f"inbounds[{i}].strict_route 在 Android / Apple 客户端未实现，请删除",
                 )
-    if "android" in platforms:
-        for i, ob in enumerate(cfg.get("outbounds", [])):
-            if isinstance(ob, dict) and ob.get("domain_resolver") == "dns-local":
-                rep.warn("android_resolver", f"outbounds[{i}] 依赖 local DNS，Android 上不总能工作")
+    # ⚠️ 不要在这里加「Android 不能引用 local DNS」之类的检查：
+    # 本仓库的 DNS 服务器 tag 是 dns-bootstrap / dns-cn / dns-proxy，
+    # 历史上那条按 `domain_resolver == "dns-local"` 匹配的门禁永远不可能触发（死检查），已删。
+    # 真要拦，就按当前实际使用的 tag 写，并同步 docs/PLATFORM-MATRIX.md。
     if "android" in platforms:
         route = cfg.get("route") or {}
         if route.get("override_android_vpn") and not route.get("auto_detect_interface"):
@@ -983,6 +988,275 @@ def audit_platform_caps(cfg, rep: Report, platforms):
                 "android_override_vpn_no_adi",
                 "route.override_android_vpn 需要 route.auto_detect_interface 才生效，当前未开",
             )
+    if "ios" in platforms:
+        # Apple 图形客户端的 "Include All Networks" 与 sing-tun 的 system/mixed 栈互斥
+        # （sing-tun stack.go：两种栈在 options.IncludeAllNetworks 时返回 ErrIncludeAllNetworks）。
+        # stack 在 1.15.0 废弃、1.17.0 移除；移除后不再需要这个取舍，故只是 WARN。
+        for i, ib in enumerate(cfg.get("inbounds", [])):
+            if ib.get("type") == "tun" and ib.get("stack") in ("system", "mixed"):
+                rep.warn(
+                    "apple_include_all_networks_stack",
+                    f"inbounds[{i}].stack = '{ib['stack']}' 与 Apple 客户端的 "
+                    f"\"Include All Networks\" 互斥（sing-tun 返回 ErrIncludeAllNetworks）；"
+                    f"要在 iOS 上开那个开关就得删掉 stack（1.15.0 起废弃、1.17.0 移除）",
+                )
+    # http_client.engine = "apple" 是 Apple 独占（NSURLSession），换到别的平台内核直接起不来。
+    for i, c in enumerate(cfg.get("http_clients", []) or []):
+        if isinstance(c, dict) and c.get("engine") == "apple" and not (platforms <= {"ios"}):
+            rep.error(
+                "apple_engine_on_universal",
+                f"http_clients[{i}].engine = 'apple' 只在 Apple 平台可用，"
+                f"当前平台 {'/'.join(sorted(platforms))} 会解析失败——要用就做成 Apple 专用 profile",
+            )
+
+
+# ---------------------------------------------------- 平台差异矩阵对账
+
+PLATFORM_MATRIX = ROOT / "docs" / "PLATFORM-MATRIX.md"
+MATRIX_SEC4_HEAD = "## 4. 三平台配置差异速查（本仓库实际做法）"
+PROFILE_ORDER = ("desktop", "android", "ios")
+_PROFILE_DIR = "1.14"
+class _Missing:
+    """哨兵：路径不存在。带可读 repr，免得错误信息里印出 <object object at 0x...>。"""
+
+    def __repr__(self):
+        return "<不存在>"
+
+
+_MISSING = _Missing()
+
+
+def _flatten(node, path="", out=None):
+    """把嵌套 JSON 展平成 {路径: 值}；空容器也留一个路径。"""
+    if out is None:
+        out = {}
+    if isinstance(node, dict):
+        if not node:
+            out[path] = {}
+        for k, v in node.items():
+            _flatten(v, f"{path}.{k}" if path else k, out)
+    elif isinstance(node, list):
+        if not node:
+            out[path] = []
+        for i, v in enumerate(node):
+            _flatten(v, f"{path}[{i}]", out)
+    else:
+        out[path] = node
+    return out
+
+
+def _resolve_path(cfg, path: str):
+    """按 `a.b[0].c` 取子节点；不存在返回 _MISSING。"""
+    node = cfg
+    for m in re.finditer(r"([A-Za-z0-9_\-]+)|\[(\d+)\]", path):
+        if node is _MISSING:
+            return _MISSING
+        if m.group(1) is not None:
+            if not isinstance(node, dict) or m.group(1) not in node:
+                return _MISSING
+            node = node[m.group(1)]
+        else:
+            idx = int(m.group(2))
+            if not isinstance(node, list) or idx >= len(node):
+                return _MISSING
+            node = node[idx]
+    return node
+
+
+def _sec4_rows():
+    """从 docs/PLATFORM-MATRIX.md 的 §4 表抽出 [(路径, 是否条数, {平台: 单元格})]。"""
+    if not PLATFORM_MATRIX.exists():
+        return None
+    text = PLATFORM_MATRIX.read_text(encoding="utf-8")
+    i = text.find(MATRIX_SEC4_HEAD)
+    if i < 0:
+        return None
+    body = text[i:]
+    end = body.find("\n## ", 1)
+    if end > 0:
+        body = body[:end]
+    rows = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or set(line) <= set("|- "):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) != 4:
+            continue
+        if cells[0] in ("项", "JSON 路径"):
+            continue
+        m = re.match(r"^`([^`]+)`(\s*条数)?$", cells[0])
+        if not m:
+            continue
+        rows.append((m.group(1), m.group(2) is not None, dict(zip(PROFILE_ORDER, cells[1:]))))
+    return rows
+
+
+def _load_profiles(rep: Report):
+    cfgs = {}
+    for k in PROFILE_ORDER:
+        p = PROFILES / _PROFILE_DIR / f"{k}-lazy.json"
+        if not p.exists():
+            rep.error("matrix_platform_stale", f"找不到 profiles/{_PROFILE_DIR}/{k}-lazy.json")
+            return None
+        cfgs[k] = json.loads(p.read_text(encoding="utf-8"))
+    return cfgs
+
+
+def audit_matrix_platform(rep: Report):
+    """把 docs/PLATFORM-MATRIX.md §4 的差异速查表与三份 profile 逐项对账。
+
+    为什么需要：PLATFORM-MATRIX.md 是平台差异的唯一权威清单，此前**零门禁**——
+    它在第 1 节把 route_*_address_set 一律标 ✅（错的）、在第 4 节漏了 experimental，
+    机器全绿，只有人读才可能发现。这正对 L26/L27 的那条教训：台账里写下的断言
+    必须有字段/门禁承载。
+
+    两条门禁：
+      · matrix_platform_stale —— §4 里某一行的值/存在性与实际配置不符；
+      · profile_drift         —— 三份配置出现了 §4 没登记的差异。
+    """
+    rows = _sec4_rows()
+    if rows is None:
+        rep.error(
+            "matrix_platform_stale",
+            f"docs/PLATFORM-MATRIX.md 里找不到 `{MATRIX_SEC4_HEAD}` 或其后没有表格——"
+            f"该表是平台差异的唯一清单，删了它就没有对账依据",
+        )
+        return
+    if not rows:
+        rep.error("matrix_platform_stale", "docs/PLATFORM-MATRIX.md §4 表里没有可解析的数据行")
+        return
+    cfgs = _load_profiles(rep)
+    if cfgs is None:
+        return
+
+    declared = set()
+    for path, is_count, cells in rows:
+        declared.add(path)
+        for k in PROFILE_ORDER:
+            raw = cells[k]
+            actual = _resolve_path(cfgs[k], path)
+            if is_count:
+                m = re.match(r"^`(\d+)`$", raw)
+                if not m:
+                    rep.error(
+                        "matrix_platform_stale",
+                        f"§4 的 `{path}` 条数 / {k} 单元格格式不认识：{raw!r}（应为 `数字`）",
+                    )
+                    continue
+                if actual is _MISSING:
+                    rep.error("matrix_platform_stale", f"§4 说 {k} 有 `{path}`，实际不存在")
+                elif not isinstance(actual, (list, dict)):
+                    rep.error("matrix_platform_stale", f"§4 说 {k} 的 `{path}` 是条数，实际不是容器")
+                elif len(actual) != int(m.group(1)):
+                    rep.error(
+                        "matrix_platform_stale",
+                        f"§4 说 {k} 的 `{path}` 是 {m.group(1)} 条，实际 {len(actual)} 条",
+                    )
+                continue
+            if raw.strip("*").strip() == "删除":
+                if actual is not _MISSING:
+                    rep.error(
+                        "matrix_platform_stale",
+                        f"§4 说 {k} 的 `{path}` 应删除，实际存在：{actual!r}",
+                    )
+                continue
+            m = re.match(r"^`(.*)`$", raw)
+            if not m:
+                rep.error(
+                    "matrix_platform_stale",
+                    f"§4 的 `{path}` / {k} 单元格格式不认识：{raw!r}"
+                    f"（应为 `JSON 字面量` 或 删除；普通说明文字请写在表外）",
+                )
+                continue
+            try:
+                expect = json.loads(m.group(1))
+            except json.JSONDecodeError:
+                # 回退成纯文本比较：表格里写 `sb-template-1.14` 比写 `"sb-template-1.14"` 可读得多，
+                # 而写错（如 ture / ture）一样会因不相等而报错，不会静默放过。
+                expect = m.group(1)
+            if actual is _MISSING:
+                rep.error(
+                    "matrix_platform_stale",
+                    f"§4 说 {k} 的 `{path}` 是 `{m.group(1)}`，实际该路径不存在",
+                )
+            elif actual != expect:
+                rep.error(
+                    "matrix_platform_stale",
+                    f"§4 说 {k} 的 `{path}` 是 `{m.group(1)}`，实际是 {actual!r}",
+                )
+    if not rep.errors:
+        rep.info(
+            "matrix_platform_ok",
+            f"docs/PLATFORM-MATRIX.md §4 的 {len(rows)} 行与三份 profile 逐项一致",
+        )
+
+    # profile_drift：三份配置里凡是出现差异的路径，必须已在 §4 登记
+    flats = {k: _flatten(cfgs[k]) for k in PROFILE_ORDER}
+    all_paths = sorted(set().union(*(set(f) for f in flats.values())))
+    for path in all_paths:
+        vals = [flats[k].get(path, _MISSING) for k in PROFILE_ORDER]
+        if all(v == vals[0] for v in vals):
+            continue
+        if any(
+            path == d or path.startswith(d + ".") or path.startswith(d + "[")
+            or d.startswith(path + ".") or d.startswith(path + "[")
+            for d in declared
+        ):
+            continue
+        rep.error(
+            "profile_drift",
+            f"三份 profile 的 `{path}` 不一致（{vals[0]!r} / {vals[1]!r} / {vals[2]!r}），"
+            f"但 docs/PLATFORM-MATRIX.md §4 表里没有登记这一项——"
+            f"平台差异必须写进矩阵，否则没人知道它是有意为之还是漏改",
+        )
+
+
+def audit_matrix_coverage(rep: Report):
+    """templates/groups.json（骨架）与三份 profile（实例）双向对账。
+
+    为什么需要：模板是「该有哪些组」的唯一声明，但此前没有任何检查把它与 profile 挂钩——
+    模板加了组、profile 没加（或类型不一致），机器全绿。反过来 profile 里冒出模板
+    没登记的组，也没人管。
+    """
+    tpl_path = ROOT / "templates" / "groups.json"
+    if not tpl_path.exists():
+        return
+    tpl = json.loads(tpl_path.read_text(encoding="utf-8"))
+    tpl_groups = {}
+    for ob in tpl.get("outbounds") or []:
+        if isinstance(ob, dict) and ob.get("type") in ("selector", "urltest"):
+            tpl_groups[ob.get("tag")] = ob.get("type")
+    cfgs = _load_profiles(rep)
+    if cfgs is None:
+        return
+    for k in PROFILE_ORDER:
+        prof_groups = {}
+        for ob in cfgs[k].get("outbounds") or []:
+            if isinstance(ob, dict) and ob.get("type") in ("selector", "urltest"):
+                prof_groups[ob.get("tag")] = ob.get("type")
+        for tag, typ in tpl_groups.items():
+            if tag not in prof_groups:
+                rep.error(
+                    "template_profile_group_missing",
+                    f"{k}-lazy.json 缺模板里的分流组 `{tag}`——"
+                    f"templates/groups.json 是本仓库对「该有哪些组」的唯一声明",
+                )
+            elif prof_groups[tag] != typ:
+                rep.error(
+                    "template_profile_group_type",
+                    f"{k}-lazy.json 的 `{tag}` 是 {prof_groups[tag]}，"
+                    f"模板要求 {typ}（组类型是分流行为的开关，不是风格问题）",
+                )
+        for tag in prof_groups:
+            if tag not in tpl_groups:
+                rep.error(
+                    "profile_group_not_in_template",
+                    f"{k}-lazy.json 多了模板没登记的组 `{tag}`——"
+                    f"要么把它加进 templates/groups.json，要么删掉",
+                )
+    if not rep.errors:
+        rep.info("matrix_coverage_ok", f"三份 profile 的分流组与模板一致（{len(tpl_groups)} 个组）")
 
 
 def run_singbox_check(binary: str, cfg_path: Path, rep: Report):
@@ -1841,6 +2115,24 @@ def main():
     if not tpl_rep.ok():
         failed = True
 
+    # 平台差异矩阵对账（仓库级）：PLATFORM-MATRIX.md §4 ⟺ 三份 profile 的实际值。
+    plat_rep = Report("docs/PLATFORM-MATRIX.md §4")
+    audit_matrix_platform(plat_rep)
+    if plat_rep.items and not args.json:
+        for lv, code, msg in plat_rep.items:
+            print(f"[{lv[0]}] {msg}")
+    if not plat_rep.ok():
+        failed = True
+
+    # 模板 ⟺ profile 的组一致性（仓库级）：模板声明该有哪些组，profile 必须照做。
+    cov_rep = Report("templates/groups.json ⟺ profiles")
+    audit_matrix_coverage(cov_rep)
+    if cov_rep.items and not args.json:
+        for lv, code, msg in cov_rep.items:
+            print(f"[{lv[0]}] {msg}")
+    if not cov_rep.ok():
+        failed = True
+
     if args.files:
         # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
@@ -1898,6 +2190,8 @@ def main():
         (redact_rep, {"redaction"}),
         (tools_rep, {"tools"}),
         (tpl_rep, {"template-text"}),
+        (plat_rep, {"platform-matrix"}),
+        (cov_rep, {"template-coverage"}),
     ]
     if args.json:
         all_results = ledger_results + results

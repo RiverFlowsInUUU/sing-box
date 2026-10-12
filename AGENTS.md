@@ -52,6 +52,8 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 15 | **出口 IP 的地址族不由客户端决定**。`resolve` 只能保证「本地 → 服务端」这一段是 IPv4 字面量（日志可证）；「服务端 → 目标站」那一段完全由服务端决定（NAT64、服务端 `sniff` 后自行重解析域名等）。⇒ 看到 IPv6 出口时**不要在本机配置里找原因、更不要为了它继续加固本地**，先确认该地址是不是节点本身的 AAAA 记录；要改就去服务端禁用 IPv6 出网。**已证实**：本地已全 IPv4 仍出现 VPS 自身 AAAA 出口；**未证实**：服务端为何在某些时段选 IPv6、禁用 IPv6 是否就能解决（属建议，未在真实 VPS 验证）。详见 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
 | 16 | **上游新增功能必须显式写下「启用 / 不启用 / 必须跟随」**。上游发新版本时，除了「哪些字段要删」（`deprecated`/`removed`），还有「多了哪些新能力」——后者**没有默认答案**，不写就是隐式选择了“不启用”，理由往往是“没注意到”。⇒ 每个新功能在 `docs/version-matrix.json` 里建一条 `kind: "new"`（必填 `adopt` + `reason`，有字段可检测的还要 `expect`），并在 `docs/DECISIONS.md` 记下理由与备选方案。`audit.py` 有 `new_feature_without_adoption` / `new_feature_expect_invalid` / `new_feature_decision_overdue` / `new_feature_uncovered` / `decision_without_record` 门禁兜底 |
 | 17 | **改配置、改流程都先拉仓库、先看 diff**。走到新环境时先 `git clone`（或 `git pull`），在本地产出改动后：**先 `git diff` 给人看、得到同意、才 `commit` / `push`**。**不得直接覆盖已有文件** —— 历史上有过“把已更正过的文档又改回错误结论”的先例（L17 写反 → L18 推翻）。**克隆拿不到 `local/`**（已 `.gitignore`），真实节点只能由用户当场提供（铁律 7） |
+| 18 | **依据有优先级：官方文档 > 官方源码 > 本仓文档**。三条冲突时以官方为准，并**当场修本仓文档**，不要留「以本仓结论为准」的余地。① 官方 `docs/clients/{apple,android,desktop}/` 与 `docs/configuration/`（本仓快照见 `docs/upstream-*.md`）；② 内核源码 `protocol/tun/`、`route/` 与官方客户端源码 `sing-box-for-apple` / `sing-box-for-android`；③ 本仓 `docs/*.md`。**本仓的每一条经验结论都必须能追到 ①②**，追不到的不写（写成「未验证」而不是写成结论）。 |
+| 19 | **平台差异必须同时落三处，缺一就是静默失效**：① 改 `profiles/1.14/*-lazy.json`；② 在 `docs/PLATFORM-MATRIX.md` §4 表里加**一行**（第一列必须是 `` `JSON 路径` ``，单元格必须是 `` `JSON 字面量` `` 或 `**删除**` —— 说明文字写在表外）；③ 需要时在 `tools/audit.py` 加门禁。`matrix_platform_stale` 逐格对账、`profile_drift` 反向兜底（§4 未登记的差异一律 ERROR）。**平台的能力清单（§1/§1a/§2/§2a）无法机器核对**（没有可靠的官方机读源），只能人工按「来源」一栏复核 —— 别误以为它也上了锁。 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -104,7 +106,8 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
 templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
-  audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
+  audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
+                                平台矩阵对账（matrix_platform_stale / profile_drift）/ 模板覆盖对账
   diff_config.py              ← 两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
   upgrade-check.py            ← 上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md（勿手改后者）
@@ -224,7 +227,9 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 九项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义（route 层 + DNS 层）/ IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
+# 九项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义（route 层 + DNS 层）/ IPv4-only 端到端 / 新功能采纳）
+#   + 仓库级对账（平台差异矩阵 §4 ⟺ 三份 profile；templates/groups.json ⟺ 三份 profile 的分流组）
+#   + 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
 # audit.py 自己找 sing-box（ROOT/bin/ 或 PATH）；也认环境变量 SINGBOX_BIN
 #   ⚠️ 本机没有 bin/ 也没装进 PATH 时，--run 会**静默降级**为 INFO 跳过（看起来照样 PASS）。
 #   要真跑就把本机路径放进环境变量（仓库里不许写本机绝对路径，铁律 7）：
@@ -233,6 +238,10 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 # 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
 # 并逐个 compile tools/*.py + 对 diff_config.compare / DIRECT_NON_EMPTY_KEYS 做不变量自检
 #   （门禁自己不被人查，L25：静默失效比报错危险）
+# 并校验 docs/PLATFORM-MATRIX.md §4 表与三份 profile 的实际值逐格一致（matrix_platform_stale），
+# 以及三份 profile 的分流组与 templates/groups.json 一致（template_profile_group_missing 等）；
+# 反向由 profile_drift / profile_group_not_in_template 兜底 —— §4 未登记的差异、模板未登记的组，
+# 都会报 ERROR（铁律 19）
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 

@@ -36,7 +36,7 @@ jobs:
           install -m 755 "/tmp/sing-box-${V}-linux-amd64/sing-box" /usr/local/bin/sing-box
           sing-box version
 
-      - name: 配置与仓库门禁（9 类配置风险 + 台账 / 决策 / 防泄漏 / 工具自检 / 模板文字）
+      - name: 配置与仓库门禁（9 类配置风险 + 台账 / 决策 / 防泄漏 / 工具自检 / 模板文字 / 平台矩阵 / 模板覆盖）
         env:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
@@ -55,13 +55,15 @@ jobs:
           echo "  · 规则集 / DNS / 出站初始化期的引用与资源问题"
           echo "audit.py --run 会把 tun 入站临时替成 mixed 并真跑一次 run，抓启动期 FATAL。"
           echo
-          echo "另外，audit.py 每次都会做六道与具体配置无关的自检："
+          echo "另外，audit.py 每次都会做八道与具体配置无关的自检："
           echo "  · 教训台账双向一致 —— lessons_missing_gate / gate_without_lesson / lesson_missing_gate_line"
           echo "  · 决策记录双向一致 —— decision_without_record / decision_references_unknown"
           echo "  · 防泄漏扫查（被跟踪文件 + commit message）—— sensitive_ip_in_repo"
           echo "  · 工具自检（tools/*.py 能否编译、关键工具不变量）—— tool_syntax_error / tool_selftest_failed"
           echo "  · 模板文字检查（_rules_of_thumb 有没有写过期的口径）—— template_thumb_stale"
           echo "  · DNS 层广告拦截（白名单配套 / 动作 / 顺序与 route 层各自校验）—— dns_ad_without_whitelist / dns_ad_target / dns_ad_order"
+          echo "  · 平台差异矩阵对账（PLATFORM-MATRIX.md §4 ⟺ 三份 profile）—— matrix_platform_stale / profile_drift"
+          echo "  · 模板覆盖对账（templates/groups.json ⟺ 三份 profile 的分流组与类型）—— template_profile_group_missing / template_profile_group_type / profile_group_not_in_template"
 
       - name: 人读版矩阵是否与 JSON 同步
         run: |

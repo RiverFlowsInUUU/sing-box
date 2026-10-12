@@ -48,7 +48,8 @@ profiles/1.14/                可运行配置（占位节点）
 templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
-  audit.py                    门禁：8 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
+  audit.py                    门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
+                              平台矩阵对账 / 模板覆盖对账
   diff_config.py              两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
   upgrade-check.py            上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md（勿手改后者）

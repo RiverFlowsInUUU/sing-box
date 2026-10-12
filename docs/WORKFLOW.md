@@ -39,13 +39,20 @@ docs/PLATFORM-MATRIX.md    三平台能力差异
 docs/version-matrix.json   机器可读字段生命周期（audit.py 的依据）
 docs/VERSION-MATRIX.md     上表的人读版（由 tools/gen-docs.py 生成）
 docs/schema.json           sing-box 官方 schema（字段白名单）
-docs/upstream-*.md         上游 deprecated / migration / changelog / tun 的本地快照
+docs/upstream-*.md         上游文档快照（**取上游 testing 分支，不是锁定版本**）
+
+  ⚠️ 这四份快照的 ref 是 `upgrade-check.py` 里的 `BRANCH = "testing"`，
+  也就是**可能比 `singbox_version.txt` 锁定的正式版更新**（实测 `upstream-tun.md` 731 行
+  vs 1.14.3 官方 `tun.md` 699 行，多出的正是 1.15.0 的变更段）。
+  这是**故意的**：它的用途是「提前预警下一个版本要改什么」，不是「当前版本的说明书」。
+  ⇒ 用它判断「1.14.3 支持什么」是错的；判断当前版本请查源码树里的
+  `_probe/src/sing-box-<版本>/docs/`，或线上对应版本的 tag 文档。
 docs/evidence/             事故证据存档（脱敏后入库）
 profiles/<大版本>/          可运行配置（**占位节点**），按平台分文件
 local/                      【不提交】本机真实节点配置（.gitignore 已忽略，仅存本地）
 nodes/nodes.example.json   用户节点在该仓库里的书写示例
 templates/                 片段骨架（节点、分流组）
-tools/audit.py             门禁（唯一入口：配置 + 台账 + 决策 + 防泄漏 + 工具自检）
+tools/audit.py             门禁（唯一入口：配置 + 台账 + 决策 + 防泄漏 + 工具自检 + 平台矩阵 / 模板覆盖对账）
 tools/diff_config.py       两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
 tools/upgrade-check.py     升级巡检（含第 5 节新功能清点）
 tools/gen-docs.py          由 JSON 生成人读版矩阵
@@ -449,7 +456,7 @@ else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 | "`direct` 出站就是个直连，不用写别的" | 裸的 `{"type":"direct","tag":"direct"}` 是**空 direct**，不能当规则集下载的 detour。下载专用出站固定叫 `direct-download`，必须带 `domain_resolver` |
 | "给 direct 加 `domain_strategy: ipv4_only` 就不算空了" | 错。`domain_strategy` 已废弃并被 `schema:"omit"`，**填了也不算数**；而且 1.14 下直接触发 legacy domain strategy 的 FATAL。真正算数的是 `domain_resolver` / `bind_interface` / `inet4_bind_address` / `routing_mark` 等 |
 | "字段没了内核会提示" | 未知字段/已移除字段会，**已废弃未移除的常常不会** |
-| "iOS 和 Windows 配置可以通用" | 大部分可以，但 `strict_route`、`clash_api`、TUN 地址这些要分开 |
+| "iOS 和 Windows 配置可以通用" | 大部分可以，但 `strict_route`、TUN 地址这些必须分开；差异全表见 `docs/PLATFORM-MATRIX.md` §4，且那张表有门禁守着（铁律 19） |
 | "规则集用 GitHub raw 就行" | 国内经常打不开，必须走 jsdelivr CDN，且配置里显式指定下载用的 `http_client` |
 | "广告用 `category-ads-all` 就够了" | 本仓库用 Jinx (`jinx-ads`) + 秋风 (`awanue-ads`)，且**必须**配 `jinx-direct` 放行集，顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | "规则顺序无所谓" | 顺序错了等于没加。`geosite-cn` 排在拦截之前，国内广告域名会先命中直连，广告规则再无机会执行 |

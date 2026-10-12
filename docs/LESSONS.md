@@ -267,12 +267,22 @@ sing-box 的 JSON schema 是**全平台共用**的一份（`docs/schema.json`）
 **已确认的坑**
 
 - `inbounds[type=tun].strict_route`：Android / Apple 未实现（桌面可用）
-- `outbound.domain_resolver` 指向 `local` 类型 DNS：Android 上不总能工作
 - `route.override_android_vpn`：必须同时开 `auto_detect_interface` 才有意义
+- `inbounds[type=tun].stack` 为 `system` / `mixed`：与 Apple 客户端的
+  「Include All Networks」互斥（sing-tun 返回 `ErrIncludeAllNetworks`）—— 但 `stack`
+  在 1.15.0 废弃、1.17.0 移除，届时这个取舍自动消失，所以只是 WARN
+- `http_clients[].engine = "apple"`：Apple 独占（NSURLSession），别的平台内核起不来
 
 依据 `docs/PLATFORM-MATRIX.md` + 官方 `docs/clients/*/features.md`。
 
-**门禁**：`platform_strict_route`, `android_resolver`, `android_override_vpn_no_adi`
+**已废弃的一项**：早期还写了一条「`outbound.domain_resolver` 指向 `local` 类型 DNS：Android
+上不总能工作」，对应的门禁按 `domain_resolver == "dns-local"` 匹配 —— 而本仓库的 DNS 服务器
+tag 一直是 `dns-bootstrap` / `dns-cn` / `dns-proxy`，**该门禁永远不可能触发**（死检查，只在
+`archive/1.14/` 的旧文件里出现过 `dns-local`），已删除。教训：门禁若按某个字面量匹配，
+必须同时确认该字面量在当前配置里真的会用到（见 L25 的同类问题）。
+
+**门禁**：`platform_strict_route`, `android_override_vpn_no_adi`,
+`apple_include_all_networks_stack`, `apple_engine_on_universal`
 
 ---
 
@@ -1332,6 +1342,154 @@ L29 我刚写下「交付前跑 audit 必须与 CI 同条件」——但那条�
 commit message 与本地一致」，但需要网络与远端访问，不适合放进无网 CI。）
 
 **涉及**：`git` 操作纪律、`AGENTS.md`
+
+---
+
+## L32 平台差异清单零门禁 —— 第 1 节把「Android 上静默失效」的字段写成 ✅
+
+**现象**
+
+`docs/PLATFORM-MATRIX.md` 第 1 节长期只有一行：
+
+```
+| route_address / route_exclude_address 系列 | ✅ | ✅ | ✅ |
+```
+
+而这行是**错的**：`_set` 变体（`route_address_set` / `route_exclude_address_set`）
+在 **Android 图形客户端完全无效**，而且是**静默**无效 —— 不报错、不警告，只是白写。
+用户按这行给安卓加「bypass 大陆 IP」，会得到一份毫无效果却看起来正确的配置。
+
+同一份文档第 4 节写「其余（`dns`/`route`/`outbounds`/`http_clients`）三平台完全一致」，
+漏了 `experimental`（差异恰好在那里：desktop 多一个 `clash_api`，三家 `cache_id` 各不相同）。
+
+**根因**
+
+平台差异的文档在**第 1/2 节是一句人话**（「✅/❌/⚠️ + 说明」），
+`tools/audit.py` 的 `audit_platform_caps()` 只看配置里**出现了什么**（写了 `strict_route` 就报），
+**不看官方能力清单**，于是：
+
+- 文档写错 → 没有门禁能发现；
+- 配置里缺少某平台的东西（例如 Android 该删没删）→ 也没有门禁。
+
+`grep PLATFORM-MATRIX tools/*.py` 只命中 `audit.py` 文件头的一句注释 ⇒
+「平台差异的唯一真源」在机器面前**完全不存在**。
+
+**为什么没被拦住**
+
+矩阵的断言全是**散文**（✅、❌、⚠️ + 中文说明），没有任何可机读的形状，
+所以既没法解析、也就没想过要解析。直到要把它变成门禁时才发现：
+**散文天生不可校验**，必须先把它压成「JSON 路径 + 期望值」的三列表格。
+
+**修法**
+
+1. 修事实：`route_exclude_address_set` 从「系列」里拆出来单独一行，Android 标 ❌ 并新增 §1a
+   写清两个内核闸门（`protocol/tun/inbound.go:384` 的 `if t.platformInterface == nil || C.IsWindows`
+   与 `:418` 的 `!(runtime.GOOS == "android" && t.platformInterface != nil)`）。
+2. 把 §4 速查表改成**机器读得懂的六行**：第一列 `` `JSON 路径` ``（可加「条数」后缀），
+   后三列 `` `JSON 字面量` `` 或 `**删除**`，说明文字一律移到表外。
+3. 新增两条门禁（`tools/audit.py`）：
+   - `matrix_platform_stale` —— §4 逐格与三份 `profiles/1.14/*-lazy.json` 实际值对账；
+   - `profile_drift` —— 反向兜底，三份配置出现**任何**未登记的差异即 ERROR
+     （防止「悄悄改了配置、忘了登记」和「登记了但配置没改」两个方向）。
+4. 明确能力清单（§1/§1a/§2/§2a）**无法机器核对**（没有可靠的官方机读源），
+   只能按来源一栏人工复核 —— 这点写在文件头，免得下次误以为它也被上锁了。
+
+**门禁**：`matrix_platform_stale`, `profile_drift`, `matrix_platform_ok`
+
+**涉及**：`docs/PLATFORM-MATRIX.md`, `tools/audit.py`, `AGENTS.md` 铁律 18
+
+---
+
+## L33 骨架模板与实例配置之间没有任何一致性检查
+
+**现象**
+
+`templates/groups.json` 是「这份配置该有哪些分流组」的唯一声明
+（`Proxy` / `AI` / `AD` / `direct` / `block` / `direct-download`），
+三份 `profiles/1.14/*-lazy.json` 是它的实例。但在本轮梳理前：
+
+- 模板里加一个组、profile 没跟着加 → 机器全绿；
+- 模板说 `AI` 必须是 `urltest`、某个 profile 悄悄写成 `selector` → 机器全绿；
+- profile 里冒出一个模板没登记的组 → 机器全绿。
+
+`audit_template()` 只审模板自己（组在不在、类型对不对），
+**从头到尾没有任何一行代码把模板与 profile 放在一起看**。
+
+**根因**
+
+`audit_template(rep)` 的签名里根本没有配置参数 —— 它被设计成「只审那一份骨架文件」。
+于是「模板对不对」有门禁，「照模板做出来的东西对不对」没人管。
+
+这类缺口的共同形状是：**检查只覆盖了「声明」，没覆盖「声明 ⟺ 实现」**。
+同一个形状在 L26（风险点无字段承载）、L27（文件头声明无人校验）、L32（矩阵零门禁）里都出现过。
+
+**为什么没被拦住**
+
+模板是给**人**看的参考文件，最早引入时只当成一份「复制粘贴的起点」，
+没被当成「可校验的接口」。接口一旦不被校验，它的值就退化成了注释。
+
+**修法**
+
+新增 `audit_matrix_coverage()`（`tools/audit.py`），双向对账：
+
+1. 模板里每个 selector/urltest 组，三份 profile 都必须有，且**类型一致**
+   → `template_profile_group_missing` / `template_profile_group_type`；
+2. profile 里每个 selector/urltest 组都必须在模板里有登记
+   → `profile_group_not_in_template`；
+3. 全部通过时打 INFO `matrix_coverage_ok`。
+
+**门禁**：`template_profile_group_missing`, `template_profile_group_type`,
+`profile_group_not_in_template`, `matrix_coverage_ok`
+
+**涉及**：`templates/groups.json`, `profiles/1.14/*-lazy.json`, `tools/audit.py`
+
+---
+
+## L34 门禁按一个「早就不再使用的字面量」匹配 —— 它永远不会响
+
+**现象**
+
+`audit_platform_caps()` 里有一条 WARN 门禁 `android_resolver`，判据是
+「Android 平台上某个出站的 `domain_resolver` 指向 `dns-local`」。
+而本仓库的 DNS 服务器 tag **从一开始就是** `dns-bootstrap` / `dns-cn` / `dns-proxy`，
+`dns-local` 只在 `archive/1.14/` 的旧文件里出现过 —— 而 `archive/` 不在扫描范围内。
+
+⇒ 这条门禁**在任何输入下都不可能报出**。它给人的却是「Android 的 DNS 解析器问题已经被守住了」
+这种安全感，比没有门禁更坏。
+
+**根因**
+
+门禁是**按字面量匹配**写的（`domain_resolver == "dns-local"`），而那个字面量对应的命名法
+在后续重构中被替换掉了：DNS 服务器从「按类型命名」改成「按用途命名」，
+`dns-local` 变成了 `dns-bootstrap` + `dns-cn` + `dns-proxy` 三个。
+代码里的字符串常量没人同步 —— 它指向的东西**已经不存在了**。
+
+这是 L2/L7/L25 同一个形状的又一种表现：**代码里的断言与它描述的现实脱钩后，
+不会自己报错，只会静静失效**。区别在于前几次脱钩的是「配置」，这次是「门禁自己的判据」。
+
+**为什么没被拦住**
+
+- `audit_lessons()` 的双向校验只查「code 在台账与代码里两边都有」，
+  查不出「code 永远不可能触发」；
+- 门禁的输出里，**没报错和「报不了」长得一模一样**（都是绿）。
+  这正是 L25「门禁只审配置、不审自己」的同一个盲区 —— 只不过 L25 管的是
+  「工具能不能跑」，这里管的是「工具的判据还对不对」。
+
+**修法**
+
+1. **删掉** `android_resolver` 门禁，并在 `docs/LESSONS.md` L8 里记下删除原因，
+   写成「已废弃的一项」，免得日后有人照着旧文档又把它加回来。
+2. 一般化的纪律（写进 `AGENTS.md` 铁律 19 的注脚）：**门禁里出现的每个字面量，
+   都必须在当前配置里真的会被用到**。新增一条按字面量匹配的门禁时，
+   顺手 `grep` 一下那个字面量在三份 profile 里出现几次 —— 0 次就说明这条门禁是死的。
+3. 同轮把 `audit_platform_caps()` 重写成「按平台能力清单」而不是「按配置里出现了什么反查」，
+   让新增的能力约束有个统一的落脚点（见 L32）。
+
+**门禁**：无（本条说的正是「删掉一条死门禁」）。删除后的一致性由既有的双向校验兜住：
+`_audit_gate_codes()` 与 `_lessons_gate_codes()` 要求「代码实现了的门禁」与「台账声明的门禁」
+两边对齐 —— 所以删代码时必须同时删掉 L8 里对它的声明，否则立刻报 `lessons_missing_gate`。
+
+**涉及**：`tools/audit.py`, `docs/LESSONS.md` L8, `AGENTS.md` 铁律 19
 
 ---
 

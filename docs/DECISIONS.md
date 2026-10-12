@@ -329,6 +329,98 @@
 
 ---
 
+## D15 DNS 层广告拦截从「本地试验」推广到三份 profile（基础设施决策）
+
+- **日期**：2026-10-13
+- **触发**：`local/android-usai.json` 上实测通过 DNS 层前置拦截（`jinx-direct` 先放行、
+  `jinx-ads + awanue-ads` 回 `NXDOMAIN`）后，用户确认「按你推荐的来」，随后要求
+  「把你认为合理的都做了吧」。
+- **决策**：把这两条规则**推广进 `profiles/1.14/{android,desktop,ios}-lazy.json`**
+  （`dns.rules` 4 → 6 条），route 层的三条广告规则**保留不动**作为兜底。
+- **矩阵 ID**：（基础设施类，不进 `version-matrix.json`）
+- **为什么**：DNS 层拦在**解析之前**，设备拿不到 IP 就连不上，也省掉一整条 TCP 连接；
+  route 层拦在**连接之后**，是「已经解析了才拒绝」。两层都留是因为它们拦的不是同一类东西：
+  - DNS 层只能按**域名**拦（`predefined` 没有 `ip_cidr` 条件，见 D13）；
+  - route 层能按**域名或 IP** 拦，且覆盖「客户端绕过本地 DNS 直连 IP 字面量」的场景
+    （规则集里只有极少数 IP 型条目，但保留了这条通路）。
+  - 反过来，**只留 DNS 层不行**：客户端自带的 DoH、或直接写 IP 的请求，DNS 层根本看不见。
+- **备选方案**：
+  - **只在 DNS 层拦、删掉 route 层三条**。否决：丢掉 IP 型拦截与绕过本地 DNS 的场景。
+  - **只留 route 层**。否决：每次被拦都白跑一次 DNS 查询 + 一次 TCP 连接。
+  - **三份 profile 里各写一份 DNS 拦截、互不引用**。否决：顺序语义（白名单必须在前）
+    会在三处各错一次，而门禁 `_audit_dns_adblock` 是按「顺序 + 动作」校验的，集中更容易守。
+- **前提 / 风险**：
+  - `jinx-direct` 白名单的 47 个域名**几乎全部被拦截集覆盖**（实测 100%），
+    所以白名单规则一旦被删或排到拦截之后，被覆盖的正常域名会**静默变成 NXDOMAIN** ——
+    门禁 `dns_ad_without_whitelist` / `dns_ad_order` 守着这两点。
+  - `NXDOMAIN` 的选择见 D13：比 `predefined` 空应答更「硬」，且客户端报错明确。
+  - 若上游 Jinx 仓库改了发布格式（当前是 sing-box source 格式 JSON），
+    `format: "source"` 会解析失败 ⇒ 启动 FATAL，不会静默失效。
+
+---
+
+## D16 平台差异矩阵上锁：从「人读的文档」变成「机器校验的表」（基础设施决策）
+
+- **日期**：2026-10-13
+- **触发**：用户问「你是否有修改建议」，排查发现 `docs/PLATFORM-MATRIX.md` 第 1 节把
+  `route_address_set` / `route_exclude_address_set` 与普通 `_address` 混成一行「✅ ✅ ✅」，
+  而 `_set` 变体在 **Android 图形客户端静默失效**（内核 `protocol/tun/inbound.go:384` 与 `:418`
+  两处 `platformInterface` 闸门）—— 文档错了很久，没有任何门禁发现（L32）。
+- **决策**：把 §4 速查表改成**可机读的三列表格**（`JSON 路径` × 三平台 × `JSON 字面量`/`**删除**`），
+  新增两道门禁：`matrix_platform_stale`（矩阵 ⟺ 配置，逐格对账）与 `profile_drift`
+  （三份配置出现任何未登记差异即 ERROR）；同时新增 `audit_matrix_coverage()`
+  把 `templates/groups.json` 与三份 profile 双向对账（L33）。
+- **矩阵 ID**：（基础设施类，不进 `version-matrix.json`）
+- **为什么**：这台仓库反复出现同一个形状的失效 —— **文档与人话没有校验，就一定会腐烂**
+  （L26 台账风险点无字段、L27 文件头声明无人校、L32 矩阵零门禁）。
+  单个字段的 ✅/❌ 判断**无法**交给机器（没有可靠的官方机读源，官方 `features.md`
+  是给 Markdown 渲染器看的表格），但「文档登记的差异 = 配置实际的差异」这件事**可以**。
+  把能锁的部分锁死，人只需复核「锁不住的那部分」。
+- **备选方案**：
+  - **爬官方 `features.md` 自动生成矩阵**。否决：那是 HTML 注释驱动的渲染源，
+    格式变动不受本仓控制；一旦上游改写法，门禁会先坏掉，反而制造噪音。
+  - **只做 `matrix_platform_stale`（单向）**。否决：单向只能发现「矩阵说 A、配置是 B」，
+    发现不了「配置多了个差异、矩阵没登记」，而后者恰是 L32 的另一种形态。
+  - **把 §1/§2 的能力清单也机读化**。见「前提 / 风险」。
+- **前提 / 风险**：
+  - **§1/§1a/§2/§2a 的能力清单仍靠人工复核**（来源、行号、官方标注都写在表里）。
+    文件头已明写「本表中可机器核对的部分己上锁」，避免下次误以为整份文档都被门禁守着。
+  - `profile_drift` 会让**任何**未登记的平台差异报 ERROR —— 这是刻意的：
+    新增差异的成本是「改配置 + 加一行矩阵」，比事后查错便宜。
+    代价是**临时实验**必须放在 `local/`（已被 `matrix_platform_stale` 跳过），不能直接改 `profiles/`。
+
+---
+
+## D17 删掉桌面端只有 `default_mode` 的 `clash_api` 空壳（基础设施决策）
+
+- **日期**：2026-10-13
+- **触发**：全仓梳理时核对 `profiles/1.14/desktop-lazy.json` 的
+  `experimental.clash_api: {"default_mode": "Rule"}`：通读源码发现它既不监听端口、
+  也改不了任何分流行为，却仍创建统计组件（L32 同轮发现）。用户授权「按最优选择决定」。
+- **决策**：**删除**桌面的 `clash_api`，三份配置统一不写；将来要用再按需补全（见下）。
+- **矩阵 ID**：（基础设施类，不进 `version-matrix.json`）
+- **为什么**：这条配置的**注释意图**是「显式写 `Rule` 以免客户端默认成 `Global`」，
+  但源码里根本不是这个默认值 —— 它是个**看起来有用的假信号**，比不写更糟：
+
+  | 检查点 | 源码事实 |
+  |---|---|
+  | 端口 | `experimental/clashapi/server.go` 的 `if s.externalController {`（`externalController = options.ExternalController != ""`）才是监听开关；只有 `default_mode` 时**不开端口** |
+  | 模式 | `experimental/clashmode/manager.go`：`if defaultMode == "" { defaultMode = "Rule" }` —— 不写也是 `Rule` |
+  | 分流效果 | `route/rule/rule_item_clash_mode.go` 的 `Match` 只有在 `route.rules`/`dns.rules` 里存在 `clash_mode` 条件时才可能命中 —— 本仓库 **0 条** |
+  | 代价 | `box.go:243` 的 `if needClashAPI \|\| needAPIService \|\| options.PlatformLogWriter != nil {`，而 `needClashAPI` 只要求 `experimentalOptions.ClashAPI != nil` ⇒ 键存在即创建 Traffic Manager 与连接统计 |
+
+- **备选方案**：
+  - **保留并在 `docs/DECISIONS.md` 记录用途**（原第 13 条建议的另一个选项）。否决：
+    记录用途也改变不了「这个键只带来开销、不带来能力」；把空转配置写进文档只会让它更难删。
+  - **改成完整可用（补 `external_controller` + `secret` + `external_ui`）**。否决：
+    仓库不允许写本机绝对路径与端口约定（铁律 7），且桌面端目前没有用面板的需求；
+    真要加时**按需加**比现在预埋一个半成品干净。
+- **前提 / 风险**：将来在桌面上启用 Clash 面板时，必须同时补 `external_controller`、`secret`、
+  `external_ui` 三项，**并更新 `docs/PLATFORM-MATRIX.md` §4 那一行**（铁律 19 要求
+  矩阵 ⟺ 配置一致，否则 `matrix_platform_stale` 会报错）。这正好是门禁该起作用的地方。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更 |
@@ -340,3 +432,6 @@
 | 2026-10-12 | 新增 D12（`follow_up` 字段；源自 L26） |
 | 2026-10-12 | 新增 D13（DNS 层前置广告拦截；源自用户提问，route 层保留兜底） |
 | 2026-10-12 | 新增 D14（防泄漏扫查纳入未跟踪新文件；CI 抓到本地漏过的 5 个 IP，见 L29） |
+| 2026-10-13 | 新增 D15（DNS 层广告拦截推广进三份 profile，route 层保留兜底） |
+| 2026-10-13 | 新增 D16（平台差异矩阵上锁：matrix_platform_stale / profile_drift / 模板覆盖对账，见 L32、L33） |
+| 2026-10-13 | 新增 D17（删除桌面端 `clash_api` 空壳；只写 `default_mode` 既不监听也不分流，却创建统计组件） |
