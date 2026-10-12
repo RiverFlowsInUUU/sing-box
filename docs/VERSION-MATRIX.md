@@ -7,6 +7,16 @@
 
 ## 怎么用这张表
 
+`version-matrix.json` 里每条条目的 `kind` 只有这五种取值：
+
+- `deprecated` → **废弃中**
+- `removed` → **已移除**
+- `platform` → **平台限制**
+- `semantic` → **语义变更**
+- `new` → **新功能采纳**
+- `info` → **仅存档**
+
+五种 kind 分别意味着：
 - **废弃中**：当前正式版仍能用，但官方已宣布将来移除 → 新写的配置不要再用。
 - **已移除**：用即 `FATAL`，配置起不来 → 必须按「替代写法」改。
 - **平台限制**：字段本身合法，但目标客户端没实现 → `sing-box check` 不会报错，要靠人看。
@@ -350,8 +360,11 @@
 - 决策截止：1.17.0
 - 配置应有状态：`absent`
 - 字段路径：`inbounds[type=tun].stack`
-- 采纳理由：这不是「要不要开」而是「旧写法要删」：1.15 起 sing-tun 使用自己的 TCP/IP 栈，官方称峰值性能/能耗/内存均显著改善；删掉 stack 字段即启用。1.15/1.16 上删不删都能跑，1.17.0 起保留 stack 会 FATAL。★ 唯一风险点：本仓库 tun 写的是 mtu=9000，官方对比表用 1500/4064/65535，换栈后 mtu 取值需在正式版文档确认后再定。
+- 采纳理由：这不是「要不要开」而是「旧写法要删」：1.15 起 sing-tun 使用自己的 TCP/IP 栈，官方称峰值性能/能耗/内存均显著改善；删掉 stack 字段即启用。1.15/1.16 上删不删都能跑，1.17.0 起保留 stack 会 FATAL。
 - 覆盖关键词：`tcp/ip stack`, `sing-tun`
+- 迁移时附加待办（判据在上游正式版文档里，跑 `audit.py` 会提醒）：
+  - 换 sing-tun 自带栈后重新确认 inbounds[type=tun].mtu 取值（触发：升级到 1.15.0 正式版时（官方对比表用 1500/4064/65535，本仓库现为 9000））
+- 备注：迁移时另有附加待办，见 follow_up 字段（门禁 code matrix_follow_up_reminder，详见 docs/LESSONS.md L26）。
 - 官方：https://sing-box.sagernet.org/migration/#migrate-tun-stack
 
 ### `platform_process_path_rule`
@@ -505,6 +518,8 @@ python tools/upgrade-check.py          # 看上游新的废弃项 + 还没做决
 # 按报告把新条目写进 docs/version-matrix.json 的 entries[]
 #   废弃类：kind / deprecated_in / removed_in / path / replacement
 #   新功能：kind=new / since / adopt / reason / decide_by / keywords
+#            还有迁移时的附加待办 → follow_up（字符串或 {todo, when} 的数组；
+#            audit.py 每次都会 INFO 提醒，因为这类待办的判据不在配置里）
 python tools/gen-docs.py               # 重新生成本文件
 python tools/audit.py                  # 门禁必须 0 ERROR
 ```

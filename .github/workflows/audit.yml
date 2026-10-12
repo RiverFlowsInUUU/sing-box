@@ -36,7 +36,7 @@ jobs:
           install -m 755 "/tmp/sing-box-${V}-linux-amd64/sing-box" /usr/local/bin/sing-box
           sing-box version
 
-      - name: 结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 教训台账一致性 门禁
+      - name: 配置与仓库门禁（8 类配置风险 + 5 道台账与扫查）
         env:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
@@ -55,9 +55,12 @@ jobs:
           echo "  · 规则集 / DNS / 出站初始化期的引用与资源问题"
           echo "audit.py --run 会把 tun 入站临时替成 mixed 并真跑一次 run，抓启动期 FATAL。"
           echo
-          echo "另外，audit.py 每次都会校验 docs/LESSONS.md（事故台账）与门禁代码双向一致："
-          echo "  · lessons_missing_gate —— 台账声称有门禁但代码没实现"
-          echo "  · gate_without_lesson  —— 代码有新门禁但没人在文档里说明它拦什么"
+          echo "另外，audit.py 每次都会做六道与具体配置无关的自检："
+          echo "  · 教训台账双向一致 —— lessons_missing_gate / gate_without_lesson / lesson_missing_gate_line"
+          echo "  · 决策记录双向一致 —— decision_without_record / decision_references_unknown"
+          echo "  · 防泄漏扫查（被跟踪文件 + commit message）—— sensitive_ip_in_repo"
+          echo "  · 工具自检（tools/*.py 能否编译、关键工具不变量）—— tool_syntax_error / tool_selftest_failed"
+          echo "  · 模板文字检查（_rules_of_thumb 有没有写过期的口径）—— template_thumb_stale"
 
       - name: 人读版矩阵是否与 JSON 同步
         run: |

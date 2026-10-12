@@ -11,7 +11,8 @@
     "expect": "【仅 kind=new】采纳后该字段应有的状态：present=配置里必须有 / absent=配置里必须没有。adopt=no 时一律要求 absent（不启用就是不写这个字段）",
     "since": "【仅 kind=new】该功能首次出现在哪个版本（不含 -alpha/-beta）",
     "decide_by": "【仅 kind=new】最迟在哪个版本之前必须做完采纳决策；过了这个版本仍未决策即 ERROR",
-    "keywords": "【仅 kind=new】用于与 upstream-changelog.md 里的新功能条目做覆盖比对的关键词（小写子串）"
+    "keywords": "【仅 kind=new】用于与 upstream-changelog.md 里的新功能条目做覆盖比对的关键词（小写子串）",
+    "follow_up": "【仅 kind=new】迁移时还需重新决策的参数（数组，元素 = 一句话待办字符串，或 {todo, when}）。这类待办的判据在上游正式版文档里、不在配置里，门禁判定不了对错，只会在每次跑 audit.py 时打 INFO 提醒（见 docs/LESSONS.md L26）"
   },
   "entries": [
     {
@@ -336,12 +337,19 @@
       "expect": "absent",
       "adopt": "must",
       "decide_by": "1.17.0",
-      "reason": "这不是「要不要开」而是「旧写法要删」：1.15 起 sing-tun 使用自己的 TCP/IP 栈，官方称峰值性能/能耗/内存均显著改善；删掉 stack 字段即启用。1.15/1.16 上删不删都能跑，1.17.0 起保留 stack 会 FATAL。★ 唯一风险点：本仓库 tun 写的是 mtu=9000，官方对比表用 1500/4064/65535，换栈后 mtu 取值需在正式版文档确认后再定。",
+      "reason": "这不是「要不要开」而是「旧写法要删」：1.15 起 sing-tun 使用自己的 TCP/IP 栈，官方称峰值性能/能耗/内存均显著改善；删掉 stack 字段即启用。1.15/1.16 上删不删都能跑，1.17.0 起保留 stack 会 FATAL。",
       "keywords": [
         "tcp/ip stack",
         "sing-tun"
       ],
-      "doc": "https://sing-box.sagernet.org/migration/#migrate-tun-stack"
+      "doc": "https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+      "follow_up": [
+        {
+          "todo": "换 sing-tun 自带栈后重新确认 inbounds[type=tun].mtu 取值",
+          "when": "升级到 1.15.0 正式版时（官方对比表用 1500/4064/65535，本仓库现为 9000）"
+        }
+      ],
+      "note": "迁移时另有附加待办，见 follow_up 字段（门禁 code matrix_follow_up_reminder，详见 docs/LESSONS.md L26）。"
     },
     {
       "id": "new_dns_server_address_rule_item",

@@ -43,19 +43,21 @@ docs/
   version-matrix.json         同上，机器可读（门禁的依据）
   schema.json                 sing-box 官方 schema（字段白名单）
   upstream-*.md               官方 deprecated / migration / changelog / tun 快照
+  evidence/                   事故证据存档（脱敏后入库；铁律 11 的 debug 日志证据）
 profiles/1.14/                可运行配置（占位节点）
 templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
-  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 广告拦截语义 + IPv4-only 端到端 + 新功能采纳 + 防泄漏扫查 + 工具自检
-  upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
-  gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
+  audit.py                    门禁：8 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
+  diff_config.py              两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
+  upgrade-check.py            上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
+  gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md（勿手改后者）
 archive/                      旧大版本配置归档
 ```
 
 ## 这套仓库解决什么问题
 
-sing-box 迭代快，字段会改名、合并、废弃、移除。而现有工具兜不住这四类问题：
+sing-box 迭代快，字段会改名、合并、废弃、移除。而 `sing-box check` 只验证“字段名对不对”，下面每一类它都拦不住：
 
 | 风险 | 只靠 `sing-box check` 会怎样 | 本仓库的兜底 |
 |---|---|---|
@@ -67,6 +69,8 @@ sing-box 迭代快，字段会改名、合并、废弃、移除。而现有工�
 | **新增能力没决策** | ❌ **完全不知道多了什么**（1.15 的 MASQUE / Tailcat / sing-tun 栈） | `upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind=new` + `DECISIONS.md` |
 | **真实节点地址泄到公开仓库** | ❌ **完全不校验**（写在 `docs/` 散文里也一样） | `audit.py` 的 `sensitive_ip_in_repo`（扫全部被跟踪文件 + commit message） |
 | **门禁自己坏了 / 静默跳过** | ❌ **完全看不出来**（门禁不审自己，工具语法错也能全绿） | `audit.py` 的 `tool_syntax_error` + `tool_selftest_failed` |
+| **模板里的文字过期** | ❌ 无影响但会误导人（`templates/groups.json` 的 `_rules_of_thumb`） | `audit.py` 的 `template_thumb_stale` |
+| 上游又改了 | —（靠人工发现） | `upgrade-check.py` |
 
 ## 门禁命令
 
@@ -91,9 +95,10 @@ python tools/upgrade-check.py
 
 `audit.py` 退出码：`0` 全通过；`1` 有 ERROR，禁止交付。
 
-除配置门禁外，每次跑还会连带做四道“无参数也会跑”的自检：
+除配置门禁外，每次跑还会连带做五道“无参数也会跑”的自检：
 教训台账双向校验（`docs/LESSONS.md` ↔ 代码里的门禁 code）、决策记录双向校验（`docs/DECISIONS.md` ↔ 矩阵 `kind=new`）、
-防泄漏扫查（被跟踪文件 + commit message）、**工具自检**（`tools/*.py` 能否编译 + 关键工具不变量）。
+防泄漏扫查（被跟踪文件 + commit message）、**工具自检**（`tools/*.py` 能否编译 + 关键工具不变量）、
+**模板文字检查**（`templates/groups.json` 的 `_rules_of_thumb` 有没有写过期的口径）。
 
 ## 铁律（摘要，详见 `AGENTS.md`）
 

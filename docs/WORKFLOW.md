@@ -12,7 +12,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 - **已废弃但未移除** → 很多字段 `sing-box check` **完全静默**（典型：`download_detour`）
 - **平台差异** → `check` 完全不校验（iOS 写 `strict_route` 照样 exit=0，但没效果）
 
-所以只靠"让 AI 背文档"必然出错。本仓库把这四类知识**固化成可执行的检查**：
+所以只靠"让 AI 背文档"必然出错。本仓库把这些知识**固化成可执行的检查**（下面每一行都是一类风险）：
 
 | 风险 | 兜底手段 |
 |---|---|
@@ -25,6 +25,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 | **新增能力没决策**（多了什么而不是少了什么） | `tools/upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind="new"` + `docs/DECISIONS.md` |
 | **真实节点地址泄到公开仓库**（`docs/` 的散文也会公开） | `tools/audit.py` 的 `sensitive_ip_in_repo`（扫被跟踪文件 + commit message） |
 | **门禁自己坏了 / 静默跳过**（工具语法错也能全绿） | `tools/audit.py` 的 `tool_syntax_error` + `tool_selftest_failed` |
+| **模板里的文字过期**（`_rules_of_thumb` 无人消费，最易写反） | `tools/audit.py` 的 `template_thumb_stale` |
 | 上游又改了 | `tools/upgrade-check.py` |
 
 ## 一、目录职责
@@ -39,12 +40,14 @@ docs/version-matrix.json   机器可读字段生命周期（audit.py 的依据�
 docs/VERSION-MATRIX.md     上表的人读版（由 tools/gen-docs.py 生成）
 docs/schema.json           sing-box 官方 schema（字段白名单）
 docs/upstream-*.md         上游 deprecated / migration / changelog / tun 的本地快照
+docs/evidence/             事故证据存档（脱敏后入库）
 profiles/<大版本>/          可运行配置（**占位节点**），按平台分文件
 local/                      【不提交】本机真实节点配置（.gitignore 已忽略，仅存本地）
 nodes/nodes.example.json   用户节点在该仓库里的书写示例
 templates/                 片段骨架（节点、分流组）
-tools/audit.py             门禁
-tools/upgrade-check.py     升级巡检
+tools/audit.py             门禁（唯一入口：配置 + 台账 + 决策 + 防泄漏 + 工具自检）
+tools/diff_config.py       两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
+tools/upgrade-check.py     升级巡检（含第 5 节新功能清点）
 tools/gen-docs.py          由 JSON 生成人读版矩阵
 archive/                   旧大版本配置归档
 docs/LESSONS.md            事故台账（每条教训 → 对应门禁 code，双向可追溯）
@@ -149,6 +152,8 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 
 ```bash
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
+# 交付前至少再真启动一次（check 只反序列化，验不了能不能起来）
+python tools/audit.py --run --run-seconds 20 profiles/1.14/ios-lazy.json --platform ios
 ```
 
 `audit.py` 会自己找 `sing-box`，也可以显式指定：
@@ -160,6 +165,11 @@ export SINGBOX_BIN=/path/to/sing-box
 ```
 
 要求：**0 ERROR**。有 ERROR 不许交付。WARN 要看清是什么，并写进给用户的说明里。
+
+> `sing-box check` 通过 **不等于**能启动 —— 它只反序列化、不做任何初始化。
+> 所以交付前必须至少跑一次 `--run`（真启动、只筛 `FATAL`），这是唯一能拦住
+>「语法合法但跑不起来」的一层。因此交付话术里应当同时给出 `check` 与 `--run` 两个结论，
+> **不得只报 `check` 通过就说“没问题”**。
 
 ### A6. 交付
 
@@ -236,29 +246,6 @@ python tools/upgrade-check.py
 "require_present": ["action"]
 ```
 
-### B4. 改配置
-
-```bash
-cp -r profiles/1.14 profiles/1.15
-# 在 profiles/1.15/ 里逐项删除/替换已废弃字段
-python tools/audit.py --version 1.15.0 profiles/1.15/*.json
-```
-
-`--version` 参数就是"假设我在这个版本上跑"——用它可以**提前**发现"升到新版会炸什么"。
-
-### B5. 收尾
-
-```bash
-python tools/gen-docs.py          # 重新生成人读版矩阵
-python tools/audit.py             # 全仓库配置体检
-# 全部 0 ERROR 后：
-echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
-python tools/upgrade-check.py --write    # 更新上游文档快照
-```
-
-> ⚠️ 上面最后两行属于「需用户同意的六个动作」（`singbox_version.txt` / `--write`），
-> **先给人看 diff、得到同意再做**。
-
 ### B3bis. 处理新增能力（`kind="new"`）—— 与废弃项同等重要
 
 废弃项的处理是「**少了什么，怎么补**」；新能力是「**多了什么，用不用**」。
@@ -295,7 +282,30 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 
 ```markdown
 <!-- docs/DECISIONS.md —— 人的理由，模板见该文件开头 -->
-## D6 MASQUE 端点：不启用
+### B4. 改配置
+
+```bash
+cp -r profiles/1.14 profiles/1.15
+# 在 profiles/1.15/ 里逐项删除/替换已废弃字段
+python tools/audit.py --version 1.15.0 profiles/1.15/*.json
+```
+
+`--version` 参数就是"假设我在这个版本上跑"——用它可以**提前**发现"升到新版会炸什么"。
+
+### B5. 收尾
+
+```bash
+python tools/gen-docs.py          # 重新生成人读版矩阵
+python tools/audit.py             # 全仓库配置体检
+# 全部 0 ERROR 后：
+echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
+python tools/upgrade-check.py --write    # 更新上游文档快照
+```
+
+> ⚠️ 上面最后两行属于「需用户同意的六个动作」（`singbox_version.txt` / `--write`），
+> **先给人看 diff、得到同意再做**。
+
+## D5 MASQUE 端点：不启用
 - **日期**：2026-10-12
 - **触发**：1.15.0 上游新增
 - **决策**：不启用
@@ -305,10 +315,14 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 - **前提/风险**：……（什么条件下该重新评估）
 ```
 
+> 编号取名时必须先看 `docs/DECISIONS.md` 现有的最大编号 —— 上面的 `D5` 只是示例，
+> 真实文件里 `D5` 已经是「Tailcat + MASQUE + NaiveProxy 三合一」，照抄会撞号。
+> 几件事同一理由时可以合写一条（真实 D5 就是合写）。
+
 4. 门禁自检：`python tools/audit.py`。相关 code：
    `new_feature_uncovered`（changelog 有新功能但矩阵没收录）、
    `new_feature_without_adoption`（`kind=new` 缺 `adopt` / `reason`）、
-   `new_feature_expect_invalid`（`adopt` 与 `expect.state` 矛盾）、
+   `new_feature_expect_invalid`（`adopt` 与 `expect` 矛盾，例如写了 `adopt: "no"` 却要求字段必须存在）、
    `new_feature_decision_overdue`（已过 `decide_by` 仍未拍板）、
    `decision_without_record` / `decision_references_unknown`（矩阵与 `DECISIONS.md` 双向不一致）。
 
@@ -326,7 +340,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | `FATAL ... decode config at` 后面跟着具体路径 | 类型/枚举值不对 | 看错误里指出的路径 |
 | `FATAL ... initialize outbound[n]: invalid public_key / illegal base64` | 密钥格式不对 | reality public_key 必须是合法 base64url；SS 2022 密码必须是合法 base64 |
 | `FATAL ... http_client is conflict with deprecated download_detour field` | 两者同时出现 | 删掉 `download_detour` |
-| `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` / `network_strategy` 已被 `schema:"omit"`，填了也不起作用、仍算空** |
+| `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` 已被 `schema:"omit"`，填了根本不会生效（而且 1.14 上写了直接 FATAL）；但 `network_strategy` 不受此限 —— 它是真字段，填了就能把出站变非空** |
 | 启动成功但某类流量走错 | 平台能力 / 规则顺序 | 查 `docs/PLATFORM-MATRIX.md`、检查 `route.rules` 顺序 |
 | 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
 | **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |

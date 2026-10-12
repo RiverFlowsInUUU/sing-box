@@ -65,6 +65,12 @@ def main():
     L.append("")
     L.append("## 怎么用这张表")
     L.append("")
+    L.append("`version-matrix.json` 里每条条目的 `kind` 只有这五种取值：")
+    L.append("")
+    for k, v in KIND_LABEL.items():
+        L.append(f"- `{k}` → **{v}**")
+    L.append("")
+    L.append("五种 kind 分别意味着：")
     L.append("- **废弃中**：当前正式版仍能用，但官方已宣布将来移除 → 新写的配置不要再用。")
     L.append("- **已移除**：用即 `FATAL`，配置起不来 → 必须按「替代写法」改。")
     L.append("- **平台限制**：字段本身合法，但目标客户端没实现 → `sing-box check` 不会报错，要靠人看。")
@@ -195,6 +201,14 @@ def main():
             L.append(f"- 采纳理由：{e['reason']}")
         if e.get("keywords"):
             L.append(f"- 覆盖关键词：{', '.join('`'+k+'`' for k in e['keywords'])}")
+        if e.get("follow_up"):
+            L.append("- 迁移时附加待办（判据在上游正式版文档里，跑 `audit.py` 会提醒）：")
+            for f in e["follow_up"]:
+                if isinstance(f, dict):
+                    when = f"（触发：{f['when']}）" if f.get("when") else ""
+                    L.append(f"  - {f.get('todo', '')}{when}")
+                else:
+                    L.append(f"  - {f}")
         if e.get("note"):
             L.append(f"- 备注：{e['note']}")
         if e.get("doc"):
@@ -208,6 +222,8 @@ def main():
     L.append("# 按报告把新条目写进 docs/version-matrix.json 的 entries[]")
     L.append("#   废弃类：kind / deprecated_in / removed_in / path / replacement")
     L.append("#   新功能：kind=new / since / adopt / reason / decide_by / keywords")
+    L.append("#            还有迁移时的附加待办 → follow_up（字符串或 {todo, when} 的数组；")
+    L.append("#            audit.py 每次都会 INFO 提醒，因为这类待办的判据不在配置里）")
     L.append("python tools/gen-docs.py               # 重新生成本文件")
     L.append("python tools/audit.py                  # 门禁必须 0 ERROR")
     L.append("```")

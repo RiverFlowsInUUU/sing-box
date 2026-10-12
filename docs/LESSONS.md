@@ -1,11 +1,15 @@
 # 事故台账（LESSONS）
 
 > **这份文件是给 AI 读的。**每次生成/修改配置之前先扫一遍本文件，逐条对照自检。
-> 每条教训都必须有：现象 → 根因（含源码位置）→ 为什么没被拦住 → 修法 → 已加的门禁 code。
 >
-> **格式是机读的**：`### L<n> <标题>` 开头，`门禁：` 行列出该教训对应的 `audit.py` 门禁 code
-> （多个用 `,` 分隔，没有就写 `无`）。`tools/audit.py` 的 `audit_lessons()` 会校验这些 code
-> 在代码里真实存在 —— 防止"文档写了门禁、代码里根本没实现"。
+> **每条教训必须有五要素**：`**现象**` → `**根因**`（含源码位置）→ `**为什么没被拦住**`
+> → `**修法**` → `**门禁**`。缺哪一段，`tools/audit.py` 的 `audit_lessons()` 就报
+> ERROR `lesson_missing_element` —— 头部这句话以前只是声明、没人验，L27 就是为此而加。
+> （机器只能校「这一段在不在」，校不了「写得对不对」。）
+>
+> **格式是机读的**：`## L<n> <标题>` 开头（二级标题），`**门禁**：` 行列出该教训对应的
+> `audit.py` 门禁 code（多个用 `,` 分隔，没有就写 `无`）。
+> `audit_lessons()` 会校验这些 code 在代码里真实存在 —— 防止「文档写了门禁、代码里没实现」。
 >
 > 加新教训时：**先写 L 条目，再把门禁 code 实现出来**，或者反过来，但两边必须对得上。
 
@@ -103,14 +107,25 @@ start or reload service: start router:
 
 **现象**
 
-我给用户的上一版配置出错后，声称"实测能上网、curl 返回 204 正常"。
+我给用户的上一版配置出错后，声称“实测能上网、curl 返回 204 正常”。
 实际本机有 **OpenClash 网关**在劫持 DNS。
+
+**根因**
+
+本机不是一台干净机器：另有一个带 TUN + fakeip 的进程（OpenCLash 网关）在系统层劫持 DNS，
+而 `sing-box check` 与 `audit.py --run` 都只验“进程能不能起来”，完全绕过网络路径。
+所以我跑出来的“连得上/连不上”与 sing-box 配置**没有因果关系**，却被我当成了配置的验证结论。
 
 **证据（本机实测）**
 
 一份**完全不含 fakeip 配置**的最小配置（只有 udp `223.5.5.5` + mixed 入站 + direct 出站），
 查 `testingcf.jsdelivr.net` 时 `223.5.5.5` 仍然返回 `198.18.0.70`（fakeip 网段）——
 证明本机另有带 TUN + fakeip 的进程在劫持 DNS。**这个环境里跑出来的任何连通性结论都是假的。**
+
+**为什么没被拦住**
+
+“实测”这两个字被我当成了证据等级最高的一类，却没有先问一句“这台机器有资格做这个实验吗”。
+门禁也拦不住：这是**方法论错误**，不是配置字段错误，`tools/audit.py` 只看 JSON。
 
 **修法（铁律 11）**
 
@@ -123,7 +138,6 @@ start or reload service: start router:
 ---
 
 ## L4 凭印象增删字段，不跟用户原始配置做差异比对
-
 **现象**
 
 用户给的第一份配置里**本来就有** `"auto_detect_interface": true`。
@@ -132,86 +146,123 @@ start or reload service: start router:
 
 **根因**
 
-生成流程里**没有"差异比对"这一步**。我按自己的模板从头写配置，
-没有把"用户原始配置"当作基线逐键对比，于是丢字段、加字段都不自知。
+生成流程里**没有“差异比对”这一步**。我按自己的模板从头写配置，
+没有把“用户原始配置”当作基线逐键对比，于是丢字段、加字段都不自知。
+更根本地说：LLM 重写 JSON 时，“我记得模板里有这一项”和“用户配置里有这一项”是两件不同的事，
+而我把前者当成了后者。
+
+**为什么没被拦住**
+
+所有门禁都是“**在配置里找不该有的东西**”（废弃字段、裸 direct、缺 adi……），
+没有一条是“**拿两份配置做差**”。丢字段属于“少了东西”，静态检查天然看不见 ——
+而 `auto_detect_interface` 缺失恰好会让配置**看起来完全合法**（L2 的“能启动但没网”）。
 
 **修法（写流程，不靠自觉）**
 
-生成或修改配置前/后**必做**：
+生成或修改配置前/后**必做**逐键比对，已固化成仓库工具（跨平台，Windows 上也能跑）：
 
 ```bash
-python - <<'EOF'
-import json
-# 逐键比对「用户给的原始配置」与「我生成的配置」
-a = json.load(open("用户原始配置.json", encoding="utf-8"))
-b = json.load(open("我生成的配置.json", encoding="utf-8"))
-def walk(o, p=""):
-    if isinstance(o, dict):
-        for k, v in o.items(): yield from walk(v, f"{p}.{k}" if p else k)
-    elif isinstance(o, list):
-        for i, v in enumerate(o): yield from walk(v, f"{p}[{i}]")
-    else: yield p, o
-A, B = dict(walk(a)), dict(walk(b))
-print("只在原始配置里（可能被我删了）:", sorted(set(A) - set(B)))
-print("只在生成配置里（可能是我加的）:", sorted(set(B) - set(A)))
-for k in sorted(set(A) & set(B)):
-    if A[k] != B[k]: print(f"改了: {k}: {A[k]!r} -> {B[k]!r}")
-EOF
+python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 ```
 
-**每一个差异都必须能说出为什么**。说不出原因的，就按原始配置保留。
+输出三段：`只在原始配置里（可能被我删了）` / `只在生成配置里（可能是我加的）` /
+`两边都有但值变了`。**每一个差异都必须能说出为什么**；说不出原因的，就按原始配置保留。
 
-**门禁**：无（流程约束，由 `AGENTS.md` 第 0 节与 `docs/WORKFLOW.md` A0 节约束）
+**每一个差异都必须能说出为什么**
+
+这不是“走个流程”，而是把“我改了什么”从记忆变成事实。说不出原因 = 不该改。
+
+**门禁**：无（流程约束，由 `AGENTS.md` 铁律 0 与第 0.1 节约束；`tools/diff_config.py` 是执行工具）
 
 ---
 
 ## L5 Jinx 广告规则集的顺序铁律
-
 **现象**
 
-广告规则集换成 Jinx 后，必须保证 `jinx-direct`（放行）在 `jinx-ads`（拦截）**之前**。
+广告拦截一开始没生效，或拦了不该拦的（把国内站点也拦了）。
+用户真机表现是“广告还在”或“某个正常站点打不开”。
 
 **根因**
 
-国内广告域名大多同时属于 `geosite-cn`。如果先把 `geosite-cn` 判给 `direct`，
-广告域名就永远不会走到拦截规则 → 广告拦截失效。
+广告规则集与 `geosite-cn` 的匹配是**先命中者胜**，而国内广告域名**多半也属于 `geosite-cn`**。
+把 `geosite-cn → direct` 放在广告规则之前，国内广告域名会先被直放，广告规则再无机会执行；
+另一侧，秋风规则集（`awanue-ads`）会拦掉 Jinx 白名单里的 8 个域，
+所以它必须排在 Jinx 之后 —— **两边顺序都是唯一解**。
+
+**为什么没被拦住**
+
+“顺序错了等于没加”这件事在配置里看不出来：JSON 数组顺序是合法的，字段名也全对，
+`sing-box check` 与 `audit.py` 的结构检查一律通过。这是**语义顺序**问题，
+只有把规则集的域名清单拿出来逐条模拟匹配才看得见。
 
 **修法（顺序铁律）**
 
+顺序固定，不得调换：
+
 ```
-jinx-direct → direct
+jinx-direct → direct          （白名单先放行，否则会被后面的秋风误拦）
 jinx-ads    → AD
 awanue-ads  → AD
-geosite-cn  → direct
+geosite-cn  → direct          （必须排在最后一个，否则前面的广告规则全部失效）
 ```
 
-前三条必须紧邻且顺序固定，且都必须排在 `geosite-cn` **之前**。
+前三组必须紧邻且整体排在 `geosite-cn` 之前。
 
 **门禁**：`jinx_incomplete`, `jinx_order`, `jinx_url`, `jinx_format`, `jinx_ads_target`
 
 ---
 
 ## L7 仓库里出现真实节点
-
 **现象/风险**
 
 `profiles/` 是公开仓库的一部分。一旦把带真实 server / 密码 / uuid 的节点写进去并提交，凭据就永久泄露到 git 历史。
+
+**根因**
+
+“真实节点”这个词被理解得太窄：我最初只盯 `profiles/` 的 `server` 字段，
+而**任何被跟踪文件里的散文同样是公开的**。范围没定清楚，所以防线只画在一处。
+（这条根因在 L23 被完整验证：脱敏了 `profiles/`，却在 `docs/` 的证据文档里写了节点域名与它的 A/AAAA。）
+
+**为什么没被拦住**
+
+当时的唯一门禁 `placeholder_server` 只扫 `profiles/*.json` 的 `server` 字段；
+`docs/` 里 800 行的 markdown **没有任何工具在看**。
+“铁律写了”与“机器能拦”之间隔着一条 100% 的缝。
 
 **修法（铁律 7）**
 
 - `profiles/` 下 `outbounds[].server` 只能是占位域名（`.example.com` 等）。
 - 含真实凭据的配置一律放仓库外的 `local/`（已在 `.gitignore`）。
 - 给用户的成品放仓库外（如桌面）。
+- **范围是“整个被跟踪仓库”**，不只 `profiles/`：`docs/`、`AGENTS.md`、commit message 都算。
 
-**门禁**：`placeholder_server`
+**门禁**：`placeholder_server`, `sensitive_ip_in_repo`, `redaction_clean`
 
 ---
 
 ## L8 平台能力差异
-
 **现象/风险**
 
 iOS / Android 客户端未实现的字段写了不一定报错，但真机上行为异常或完全不生效。
+
+**根因**
+
+sing-box 的 JSON schema 是**全平台共用**的一份（`docs/schema.json`），
+字段的合法性检查在**反序列化**这一层，而“这个平台的内核有没有实现它”是**另一层**。
+于是 `check` 认为合法、内核也接受，但图形客户端根本不读这个字段。
+（官方 `docs/clients/android/features.md`、`docs/clients/apple/features.md` 用
+`:material-close: Not implemented` 标注，是唯一的权威来源。）
+
+**为什么没被拦住**
+
+`sing-box check` 只反序列化、不做任何初始化（铁律 4），平台能力更不在它的检查范围里；
+`audit.py` 早期也没有“平台”维度 —— 每份 profile 都当成通用配置审。
+
+**修法**
+
+- 平台差异统一记录在 `docs/PLATFORM-MATRIX.md`，作为唯一真源。
+- `audit.py` 增加 `audit_platform_caps()`，按 `--platform` 分别校验。
+- 三个已确认的坑固定下来（见下）。
 
 **已确认的坑**
 
@@ -226,18 +277,31 @@ iOS / Android 客户端未实现的字段写了不一定报错，但真机上行
 ---
 
 ## L9 出站骨架与引用完整性
-
 **现象/风险**
 
 分流组骨架被改错（Proxy 不是 urltest、AI 被改成 selector、AD 被塞代理节点），
 组里嵌组（`AI.outbounds` 里放 `Proxy`，两个 urltest 串联测速），
 或引用了不存在的 tag —— 这类错误 `check` 不会报，运行时才炸或静默失效。
 
+**根因**
+
+早期把 `AI` 实现成 `selector(outbounds=[Proxy, ...], default: Proxy)`，
+以为“AI 组指向 Proxy 就等于默认出口，省事”。但 `selector` 只是**静态指向**，
+它不会自己优选；结果 `AI` 与 `Proxy` 完全同源、形同虚设。
+第二个错误更隐蔽：`urltest` 套 `urltest` 会**串联两次测速** ——
+外层只拿到内层已选中的那一个节点，内层的周期性测速与外层的测速互相拖累。
+
 **背景（m02132 用户要求）**
 
 用户原话：「ai 分流组不要 proxy 作为子节点，直接就是 urltest +台湾节点」。
 原因：`AI` 若只是指向 `Proxy` 的 selector，它与 `Proxy` 完全同源，AI 组形同虚设；
 而 `urltest` 套 `urltest` 会串联两次测速（外层只拿到内层已选中的那一个节点）。
+
+**为什么没被拦住**
+
+这两类错误都不会让 `check` 失败：`selector` 引用一个存在的 tag 是合法的，
+`urltest` 的成员是另一个 `urltest` 也是合法的。它们**语义**错了，**语法**全对。
+`audit.py` 当时只有结构检查，没有“组间关系”检查。
 
 **修法**
 
@@ -252,24 +316,54 @@ iOS / Android 客户端未实现的字段写了不一定报错，但真机上行
 ---
 
 ## L10 规则集 URL 与下载方式
-
 **现象/风险**
 
 - 用 `raw.githubusercontent.com`：国内经常连不上，规则集下载失败 → 启动 FATAL
 - 不写 `http_client` / 写已废弃的 `download_detour`：1.14 起前者是唯一正确写法
 - URL 不以 `.srs` / `.json` 结尾又不写 `format`：无法推断格式
 
+**根因**
+
+规则集是**启动时联网下载**的资源，所以它的可用性链路比配置本身长得多：
+① URL 的 CDN 在国内可达性 ② 下载走哪个出站 ③ 文件格式能否推断。
+三者任一断掉都是**启动 FATAL**（`initialize rule-set[...]`），而不是“功能降级”。
+`raw.githubusercontent.com` 在国内不稳是已知事实；`download_detour` 在 1.14 被
+`http_clients` + `route.default_http_client` 取代且两者同时出现会直接报冲突。
+
+**为什么没被拦住**
+
+下载链路的正确性**只在真启动时才验证** —— 而 `sing-box check` 不做任何初始化（铁律 4），
+规则集根本不会去下载。所以“check 全绿”与“能不能启动”之间差着整条网络链路（L1）。
+
+**修法**
+
+- 统一用 CDN 镜像：`https://testingcf.jsdelivr.net/gh/<repo>@<ref>/...srs`。
+- 下载走专用非空 direct 出站（`direct-download`，带 `domain_resolver`），
+  经 `http_clients: [{tag: ruleset-dl, detour: direct-download}]` + `route.default_http_client` 引用。
+- 需要时显式写 `format: "binary"` / `"source"`。
+
 **门禁**：`ruleset_url`, `ruleset_url_raw`, `ruleset_http_client`, `ruleset_download_detour`, `ruleset_format`
 
 ---
 
 ## L11 缓存文件路径
-
 **现象/风险**
 
 `experimental.cache_file.path` 指向的**父目录不存在**时，`CacheFile.start()` 直接 ENOENT，**启动失败**。
 sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAll`），`os.O_CREATE` 只能建文件。
 含 `..` 的相对路径还依赖工作目录，跨平台不可靠。
+
+**根因**
+
+代码里打开 cache 文件只用了 `os.O_CREATE`，而它的语义是“**文件**不存在就创建”，
+**不包含“创建父目录”**。`../cache/cache.db` 这种写法把存在性押在“上级目录恰好存在”上 ——
+在仓库里恰好成立，在 Android 客户端的私有工作目录里不成立。
+用户实测：`../cache/cache.db` 报错、`../cache.db` 不报错 —— 差别只在父目录。
+
+**为什么没被拦住**
+
+父目录是否存在是**运行时环境**的属性，JSON 里看不出来。
+静态检查能看出“路径含 `..`”和“是绝对路径”，但看不出“这个机器的这个目录在不在”。
 
 **修法**：用工作目录内的相对文件名（`cache.db`）。
 
@@ -278,32 +372,72 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 ---
 
 ## L12 DNS 引用完整性
-
 **现象/风险**
 
 `dns.rules[].server` / `rule_set` / `dns.final` / `route.default_domain_resolver.server`
 指向不存在的 tag 时，启动期才报错。
+
+**根因**
+
+sing-box 的 tag 是**字符串引用**，没有类型系统或编译期校验。
+DNS 这一层引用密度最高（`dns.final` → server、`dns.rules[].server` → server、
+`dns.rules[].rule_set` → rule_set、`route.default_domain_resolver.server` → server），
+任意一处拼错都只在**构造 DNS 路由器**时才暴露。
+
+**为什么没被拦住**
+
+`sing-box check` 只反序列化 JSON，不做引用解析；`dns.servers` 里的 tag 是自由字符串，
+写 `dns-cn` 还是 `dns-cnn` 在 schema 层面都合法。
+
+**修法**
+
+把 DNS 侧的交叉引用做成**显式清单**逐条校验（`audit_repo_rules()`），
+新增一个 server / rule_set 时同步补进清单。
 
 **门禁**：`dns_final_missing`, `dns_rule_server_missing`, `dns_rule_ruleset_missing`, `ddr_missing`
 
 ---
 
 ## L13 新旧写法并存
-
 **现象/风险**
 
 `http_clients` 与已废弃的 `download_detour` 同时出现 → 直接 `FATAL http_client is conflict with deprecated download_detour field`。
+
+**根因**
+
+1.14 把规则集下载方式从 `download_detour`（字符串）迁移到
+`http_clients`（出站定义）+ `route.default_http_client`（引用）。
+迁移期两种写法**语义重叠但字段并存**，内核选择直接 FATAL 而不是“以新为准”，
+所以“新旧都留着更保险”的开发直觉在这里恰恰是致命的。
+
+**为什么没被拦住**
+
+两条规则各自检查“该字段是否合法/是否该有”，**没有一条检查“两者是否同时存在”**。
+这是**互斥字段**问题，只有把两个字段放在一起看才发现。
+
+**修法**：迁移立刻删旧字段，不留“保守的冗余”。
 
 **门禁**：`http_client_conflict`
 
 ---
 
 ## L14 反向：门禁自身出错（`UnboundLocalError`）
-
 **现象**
 
 `tools/audit.py` 曾经把 `route = cfg.get("route", {})` 写在首次用到它**之后**，
 导致 `UnboundLocalError`，整个门禁直接崩掉——**门禁崩了比没有门禁更危险**（会让人以为检查过了）。
+
+**根因**
+
+门禁是一堆顺序执行的检查函数，**局部变量绑定位置**与**使用位置**的正确性
+只靠人眼维护；重构时把 `cfg.get()` 往上挪几行就崩。
+而崩的后果是：`audit.py` 抛异常 → 什么都不输出 → 使用者以为“没输出就是没问题”。
+
+**为什么没被拦住**
+
+**“检查器自己有没有坏”这件事，没有任何检查器在看**。
+CI 里 `python tools/audit.py --run` 非零退出确实会红，但本机跑崩了、又没细看输出时，
+人会误以为门禁通过（L25 把这条扩展成了 `audit_tools()`）。
 
 **修法**
 
@@ -316,11 +450,22 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 ---
 
 ## L15 文档写了门禁、代码里没有（或反过来）
-
 **现象/风险**
 
 本文件声称某个门禁存在，而 `tools/audit.py` 里根本没这个 code —— 等于**假装有防护**；
 反过来，代码里新加了门禁却没人知道它拦的是什么事故，下次有人觉得碍事就删了。
+
+**根因**
+
+“教训台账”与“检查代码”是两份**独立维护**的文本，
+没有任何机制阻止它们漂移：写文档时顺手写一个不存在的 code、
+加代码时忘了回来记一条，两边都各自看起来很正常。
+**漂移的方向恰好是“让人更放心”的方向** —— 所以没人会主动发现。
+
+**为什么没被拦住**
+
+这是**元层面**的检查：需要读 `audit.py` 的源码（而不只是跑它）+ 读 `LESSONS.md` 的正文。
+普通的“跑一遍门禁”做不到，因为漂移的正好是门禁清单本身。
 
 **修法（双向可追溯）**
 
@@ -334,9 +479,9 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
    否则报 ERROR `gate_without_lesson`。
 
 **白名单（框架性/非配置类，不要求有教训条目）**：
-`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`
+`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`, `skip_check_template`
 
-**门禁**：`lessons_missing_gate`, `gate_without_lesson`, `lessons_missing`
+**门禁**：`lessons_missing_gate`, `gate_without_lesson`, `lessons_missing`, `lesson_missing_gate_line`
 
 ---
 
@@ -778,7 +923,9 @@ if rel.parts and rel.parts[0] == "profiles":          # ← 只管 profiles/ 目
 **为什么没被拦住**：
 1. 铁律 7 的措辞是「仓库里不放**真实节点**」，而**节点的 IP 不在任何配置字段里**（只在证据叙述里）——
    字面上不归任何门禁管。
-2. 修改前的 force-push 只重置分支指针，**不会立刻删除旧对象**；旧 commit 仍可按 SHA 直取。
+2. 当时的 force-push 只重置分支指针，**不会立刻删除旧对象**；旧 commit 仍可按 SHA 直取。
+   （2026-10-12 晚删库重建后才真正消失 —— 但“先把内容洗掉、再考虑重建”这条顺序不能省，
+   而且重建是最后手段，不能当成常规修法。）
 3. 当时仍存在思路盲区：“这是实测数据、是证据、不写就不严谨” ——
    但**证据的严谨性不需要真实地址**（只需“两者相等”这个关系，见 `docs/evidence/` 里的 🔒 说明）。
 
@@ -805,7 +952,7 @@ if rel.parts and rel.parts[0] == "profiles":          # ← 只管 profiles/ 目
 用来指代“就是那一次”：`AGENTS.md` 的「需用户同意的六个动作」表里一句“靠 force-push 补的”、
 `docs/DECISIONS.md` 的 D9 触发栏、`docs/LESSONS.md` 的 L23 标题下。三处都已推到公开仓库。
 
-**根因（实测，非推断）**：force-push 只把**分支指针**挪走，GitHub 上的旧对象仍可按 SHA 直取：
+**根因（实测，非推断）**：force-push 只把**分支指针**挪走 —— **当时**GitHub 上的旧对象仍可按 SHA 直取：
 
 ```bash
 $ gh api repos/<owner>/<repo>/commits/<旧 SHA> --jq '.commit.committer.date'   # HTTP 200，返回 2026-10-12T08:29:54Z
@@ -814,6 +961,8 @@ $ curl -s https://github.com/<owner>/<repo>/commit/<旧 SHA>.patch | grep -c '<�
 
 同时还查了两件事：**全新 clone 里已经没有这个对象**（`git cat-file -e` 失败、`count-objects` 为 0），
 但这不等于它不可取 —— REST API 与网页 commit 页是**另一条路径**，两条都实测 HTTP 200。
+（**2026-10-12 晚删库重建后，这两条路径都已变 404**。本条保留的是“force-push 本身不够”这个结论，
+不是“现在还能取到”—— 重建是最后手段，不能当成常规修法。）
 
 ⇒ **脱敏文件内容只能挡住“直接搜内容”**；一旦有人在仓库里写下那个 SHA，
 就等于给搜索者留了一把钥匙：搜到 SHA → 直接 `curl` 到原文，前面的脱敏全部作废。
@@ -833,7 +982,7 @@ $ curl -s https://github.com/<owner>/<repo>/commit/<旧 SHA>.patch | grep -c '<�
   而 SHA 恰恰是能在 GitHub 上直取旧对象的指针。黑名单自己成了新的一把钥匙，
   而且是**递归**的：拦住“写 SHA”这件事的清单，自己就得写 SHA。
 - 门禁（第二步，改对的）：改用**不点名任何 commit 的单调时间切点** ——
-  `LEAK_SCAN_START_DATE = "2026-10-12 20:30:00"`（`tools/audit.py`），
+  `LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"`（`tools/audit.py`），
   commit message 只扫这个时刻之后的（`git log --since=...`），被跟踪文件仍全量扫。
   语义是「本门禁从此生效：之后的历史必须干净」，不需要知道之前漏过什么，因此无需任何名单。
 
@@ -893,10 +1042,103 @@ $ curl -s https://github.com/<owner>/<repo>/commit/<旧 SHA>.patch | grep -c '<�
 
 ---
 
+## L26 台账里写下的“风险点”，没有任何字段承载 —— 到了升级那天没人会记得
+
+**现象**
+
+`docs/version-matrix.json` 的 `new_tun_sing_tun_stack` 条目是 `adopt: "must"`（1.15 必须删 `stack`，
+1.17 不删就 FATAL），它的 `reason` 里写着一条**唯一的风险点**：
+
+> ★ 本仓库 tun 写的是 mtu=9000，官方对比表用 1500/4064/65535，换栈后 mtu 取值需在正式版文档确认后再定。
+
+而三份 profile 里 `inbounds[type=tun].mtu` 全都是 `9000`、`stack` 全都是 `"system"`（实测 grep）。
+也就是说：**这个风险点只存在于一段散文里**。到 1.15 真正发布时，
+“删 `stack`”这件事有门禁（`expect: "absent"` 会在配置里发现残留），
+但“`mtu` 要不要跟着改”没有任何机器痕迹 —— 只靠那天有人恰好读到这句 reason。
+
+**根因**
+
+`kind: "new"` / `kind: "deprecated"` 条目能表达的是**字段级的三种状态**
+（该有 / 不该有 / 该怎么改），而“这个迁移还附带一个需要重新决策的参数”不是字段状态，
+是一种**附加待办**。矩阵的 schema 里没有承载它的位置，于是它被写进了 `reason` ——
+而 `reason` 是给人读的散文，门禁只校“非空”，不校“里面的待办被处理了”。
+`docs/DECISIONS.md` 的 `**前提 / 风险**` 栏同理：它是一段说明，不是一个能被触发的提醒。
+
+**为什么没被拦住**
+
+门禁的设计前提是“**判据在配置里**”：能通过读 JSON 判断对错才写得出检查。
+“mtu 该不该改”的判据**不在配置里，而在上游正式版文档里**（而 1.15 正式版还没发布，
+本地 `docs/upstream-tun.md` 的 `#### mtu` 只有一句 “The maximum transmission unit.” ——
+无默认值、无建议值、无 Since 徽章）。所以这类待办**天然落在现有门禁能力之外**，
+需要的是“提醒”而不是“校验”。
+
+**修法**
+
+1. 矩阵 schema 增 `follow_up` 字段（数组，元素 = 一句话待办 + 触发条件），
+   承载“迁移时还要重新决策的参数”这类附加项；`new_tun_sing_tun_stack` 把 mtu 那句从 `reason` 移进 `follow_up`。
+2. 门禁：`follow_up` 非空 ⇒ **每次跑 `audit.py` 都打 INFO 提醒**（不是 ERROR，因为尚未到决策时点），
+   内容含条目 id 与触发条件；这样“读不读到”不再取决于人。
+3. 决策截止（`decide_by`）到期时，`follow_up` 未清空 ⇒ 升级为 ERROR。
+
+**门禁**：`matrix_follow_up_reminder`
+
+**涉及**：`docs/version-matrix.json`、`tools/audit.py`、`docs/DECISIONS.md`（D1 的前提/风险栏）
+
+---
+
+## L27 文件头声称“每条都必须有”，而从没有人验证过
+
+**现象**
+
+`docs/LESSONS.md` 的文件头第 3 行写着：
+
+> 每条教训都必须有：现象 → 根因（含源码位置）→ 为什么没被拦住 → 修法 → 已加的门禁 code。
+
+实测这条声明**大面积不成立**：25 条里只有 10 条（L1/L2/L18–L25）五要素齐备。
+L7–L15 用 `**现象/风险**` 替代 `**现象**`、根本没有 `**根因**` 与 `**为什么没被拦住**` 段；
+L10/L12/L13 连 `**修法**` 都没有（只有 `**门禁**`）。
+同一个文件里还有第二处同型错误：头部写格式是 `### L<n> <标题>`，实际全部是 `## L<n>`；
+头部写「`门禁：` 行」，实际是 `**门禁**：`（`tools/audit.py` 的判定就是 `line.startswith("**门禁**：")`）——
+**照着头部的写法加一条新教训，门禁会抽不到任何 code**。
+
+**根因**
+
+写头部的时候，声明描述的是**意图**（“我打算每条都写全”），
+而 `audit_lessons()` 实现的是**可机器校验的那一半**（code 双向追溯）。
+两者之间那句“每条都必须有”从来没被翻译成检查条件 ——
+于是它退化成一句**让读者放心、但不产生任何约束力**的话。
+更糟的是格式描述写错了，而错的那一版**会让新加的条目静默失效**（门禁抽不到 code 却不报错）。
+
+**为什么没被拦住**
+
+`audit_lessons()` 当时只做两件事：code 双向追溯、`**门禁**：` 行是否存在。
+“这一段写了没有”属于**文档内部结构**，没有纳入检查范围 ——
+**而文件头的声明恰恰是最像“已经检查过了”的地方**，所以最没人回头验。
+
+**修法**
+
+1. `audit_lessons()` 增加段落存在性检查：每条要点必须能在正文里匹配到
+   `**根因` / `**为什么` / `**修法`（`**现象**` 允许写作 `**现象/风险**`，早期条目的既有写法）
+   与 `**门禁**：` 行；缺哪段就报 ERROR `lesson_missing_element`。
+   实测这一步立刻抓出 12 条（L3–L15 中的 12 条），随后逐条补齐。
+2. 头部改成与实现**逐字对齐**的表述：明确是 `## L<n>`、`**门禁**：` 行、
+   并写明“缺哪一段会报 `lesson_missing_element`”。
+3. 头部必须与检查代码同源 —— **凡在文件头写“必须”，就要能说出是哪一行代码在保证它**。
+
+**门禁**：`lesson_missing_element`, `lesson_missing_gate_line`
+
+**涉及**：`docs/LESSONS.md`（头部 + L3–L15）、`tools/audit.py`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。
-2. 在本文件追加 `## L<n> <标题>` 条目，内容必须含 **现象 / 根因（带源码路径）/ 为什么没被拦住 / 修法 / 门禁**。
-3. 在 `**门禁**：` 行里写上第 1 步的 code（反引号包裹）。
-4. `python tools/audit.py` 应当能过 —— `audit_lessons()` 会替你检查两边对得上。
-5. 跑负向测试：把配置改坏，确认新门禁真能报 ERROR。
+2. 在本文件追加 `## L<n> <标题>` 条目（**二级标题**；L6 是历史空号，新条目继续往后编）。
+3. 正文必须含五个小标题，`audit_lessons()` 会逐条校验缺哪个：
+   `**现象**`（早期条目写 `**现象/风险**` 也可以）/ `**根因**`（带源码路径）/
+   `**为什么没被拦住**` / `**修法**` / `**门禁**：`（全角冒号、加粗，行首开始）。
+4. 在 `**门禁**：` 行里写上第 1 步的 code（反引号包裹）；这条教训没有对应门禁就写「无」，
+   **但必须写这一行**，否则报 `lesson_missing_gate_line`。
+5. `python tools/audit.py` 应当能过 —— `audit_lessons()` 会替你检查两边对得上。
+6. 跑负向测试：把配置改坏，确认新门禁真能报 ERROR。

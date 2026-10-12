@@ -1066,6 +1066,9 @@ def audit_new_features(rep: Report, matrix, target_version: str):
       2. 未卜先知：decide_by 已过期而 adopt 仍缺失/非法 → ERROR（不能靠「忘了」来默认不启用）。
       3. changelog 覆盖：上游 changelog 里 >= 锁定版本 的正式版新功能条目，必须被某条 kind=new
          的 keywords 覆盖；否则 ERROR —— 防止「上游加了新功能，仓库浑然不知」。
+      4. follow_up：条目可以登记「迁移时还需重新决策的参数」（如换 sing-tun 栈后 mtu 该取多少）。
+         这类待办的判据在上游正式版文档里、不在配置里，静态检查判定不了对错，
+         所以每次跑都打一条 INFO 提醒，避免它只活在某段散文里（L26）。
     """
     news = [e for e in matrix.get("entries", []) if e.get("kind") == "new"]
     if not news:
@@ -1116,6 +1119,25 @@ def audit_new_features(rep: Report, matrix, target_version: str):
                 f"{e.get('title', '')} —— 请补上 adopt/reason，或把 decide_by 往后挪并说明原因",
             )
 
+        # 4b) follow_up：迁移时还需重新决策的参数。这类待办的判据不在配置里（在上游正式版文档里），
+        #     静态检查无法判定对错，所以只能「提醒」而不能「校验」—— 但提醒必须每次都出现，
+        #     否则「读不读到」就取决于人恰好有没有翻到那条 reason（L26）。
+        follow = e.get("follow_up") or []
+        if follow:
+            items = "；".join(
+                (
+                    f.get("todo", "")
+                    + (f"（触发：{f['when']}）" if isinstance(f, dict) and f.get("when") else "")
+                )
+                if isinstance(f, dict)
+                else str(f)
+                for f in follow
+            )
+            rep.info(
+                "matrix_follow_up_reminder",
+                f"[{eid}] 迁移时还有附加待办（判据不在配置里，无法校验，只能提醒）：{items}",
+            )
+
     # 5) changelog 覆盖比对
     feats = _changelog_features(target_version)
     if not feats:
@@ -1158,6 +1180,7 @@ LESSON_FRAMEWORK_CODES = {
     "singbox_run_tun",
     "singbox_timeout",
 }
+LESSON_HEAD_RE = re.compile(r"^##\s+L(\d+)\s+(.+)$", re.M)
 LESSONS = ROOT / "docs" / "LESSONS.md"
 LESSONS_GATE_RE = re.compile(r"`([a-z][a-z0-9_]{2,})`")
 AUDIT_SRC = Path(__file__).resolve()
@@ -1197,6 +1220,36 @@ def audit_lessons(rep: Report):
     if not LESSONS.exists():
         rep.error("lessons_missing", "docs/LESSONS.md 不存在：没有教训台账，历史踩过的坑会重犯")
         return
+    text = LESSONS.read_text(encoding="utf-8")
+    heads = list(LESSON_HEAD_RE.finditer(text))
+    for i, head in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        body = text[head.end() : end]
+        if not re.search(r"^\*\*门禁\*\*：", body, re.M):
+            rep.error(
+                "lesson_missing_gate_line",
+                f"docs/LESSONS.md 的 L{head.group(1)}（{head.group(2).strip()}）没有 `**门禁**：` 行——"
+                f"台账声明了机读格式，缺这一行等于这条教训没有门禁归属，也没有就写「无」",
+            )
+        # 五要素的「标题存在性」—— 机器只能校“有没有这一段”，校不了“写得对不对”。
+        # 这是 L27 的对策：文件头声称「每条都必须有五要素」，而 L7–L15 当时大面积缺失，
+        # 因为头部的声明从来没人验。至少把可机校的那一半变成事实。
+        missing = [
+            name
+            for name, pat in (
+                ("根因", r"^\*\*根因"),
+                ("为什么没被拦住", r"^\*\*为什么"),
+                ("修法", r"^\*\*修法"),
+            )
+            if not re.search(pat, body, re.M)
+        ]
+        if missing:
+            rep.error(
+                "lesson_missing_element",
+                f"docs/LESSONS.md 的 L{head.group(1)}（{head.group(2).strip()}）缺五要素中的："
+                f"{'、'.join(missing)}——文件头声明每条都必须有 现象/根因/为什么没被拦住/修法/门禁，"
+                f"标题缺哪一段就补哪一段（机器只能校段落是否存在）",
+            )
     real = _audit_gate_codes()
     declared = _lessons_gate_codes() or set()
     for code in sorted(declared - real):
@@ -1353,6 +1406,47 @@ _IP_TOKEN = re.compile(
 # 故意不取“引入本门禁那次提交的精确时间”：那样每改一次代码都要重取常量，形成自指循环。
 # 此值只允许随真实时间前进，不得回调。
 LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"
+
+
+def audit_template_text(rep: Report):
+    """校 templates/groups.json 的 `_rules_of_thumb` 文字。
+
+    这段文字**没有任何工具消费**（纯人手维护），因此是全文最容易过期的部分：
+    铁律 14 已在 L18 更正为「resolve 紧跟 hijack-dns」，而这里的摘录长期仍写「末尾」，
+    等于在“固定骨架”里留了一句反话。改成可机检的形式：
+      · 必须有一条同时提到 `resolve` 与 `hijack-dns`（否则无人能看出位置约束）；
+      · 不许出现「…末尾…」这种规定式说法。
+
+    判定“过期”要看**语义方向**，不能只看关键词：现文写的是
+    「…必须在 hijack-dns 之后…（放末尾等于没放）」，包含“末尾”二字却是在**否定**它，
+    不能误判。故只在两种情形下报错：① 命中历史上的规定式短语；
+    ② 提到 resolve 与末尾、却完全不提 hijack-dns（= 双不出现的旧口径）。
+    """
+    path = ROOT / "templates" / "groups.json"
+    if not path.exists():
+        return
+    try:
+        tpl = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    tips = tpl.get("_rules_of_thumb") or []
+    stale_phrases = ("末尾还要有", "末尾必须有", "末尾追加", "末尾加", "放到末尾", "放在末尾")
+    for tip in tips:
+        hit = next((p for p in stale_phrases if p in tip), None)
+        if hit is None and "resolve" in tip and "末尾" in tip and "hijack-dns" not in tip:
+            hit = "resolve + 末尾（且未提 hijack-dns）"
+        if hit:
+            rep.error(
+                "template_thumb_stale",
+                f"templates/groups.json 的 _rules_of_thumb 仍写「{hit}」式的 resolve 位置——"
+                "hijack-dns 之后的第一个 route/reject 一命中就 break match，末尾等于没放（docs/LESSONS.md L18）",
+            )
+    if not any("resolve" in tip and "hijack-dns" in tip for tip in tips):
+        rep.error(
+            "template_thumb_stale",
+            "templates/groups.json 的 _rules_of_thumb 缺一条说明 resolve 位置的条目——"
+            "这段文字无人消费，必须有机器看得懂的约束，否则下次又会被改回错的口径",
+        )
 
 
 def audit_tools(rep: Report):
@@ -1615,6 +1709,15 @@ def main():
     if not tools_rep.ok():
         failed = True
 
+    # 模板文字（同上）：`_rules_of_thumb` 是全文唯一无人消费的部分，最易过期。
+    tpl_rep = Report("templates/groups.json 文字")
+    audit_template_text(tpl_rep)
+    if tpl_rep.items and not args.json:
+        for lv, code, msg in tpl_rep.items:
+            print(f"[{lv[0]}] {msg}")
+    if not tpl_rep.ok():
+        failed = True
+
     if args.files:
         # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
@@ -1671,6 +1774,7 @@ def main():
         (decisions_rep, {"decisions"}),
         (redact_rep, {"redaction"}),
         (tools_rep, {"tools"}),
+        (tpl_rep, {"template-text"}),
     ]
     if args.json:
         all_results = ledger_results + results

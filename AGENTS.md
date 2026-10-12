@@ -41,7 +41,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
-| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + commit message**（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点 |
+| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + commit message**（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态（2026-10-12 重建仓库后）**：旧对象已随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。上面那句「仍可按 SHA 直取」是**重建前**的事实，保留它是为了说明“force-push 本身不够”——**不要**据此以为当前仓库里还躺着一个可取到的旧对象。 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
@@ -96,6 +96,7 @@ docs/
   PLATFORM-MATRIX.md          ← Android / iOS / Windows 能力差异表
   schema.json                 ← sing-box 官方 schema（字段白名单）
   upstream-*.md               ← 上游 deprecated / migration / changelog / tun 快照
+  evidence/                   ← 事故证据存档（脱敏后入库；铁律 11 允许的 debug 日志证据）
 profiles/1.14/                ← 按内核大版本归档的可运行配置（占位节点）
   desktop-lazy.json
   android-lazy.json
@@ -103,9 +104,10 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
 templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
-  audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 教训台账一致性 + sing-box check
-  upgrade-check.py            ← 上游有新正式版/新废弃项时报告差异
-  gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md
+  audit.py                    ← 门禁：8 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
+  diff_config.py              ← 两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
+  upgrade-check.py            ← 上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
+  gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md（勿手改后者）
 archive/<大版本>/             ← 旧版本配置归档（只归档不删除）
 local/                        ← 【不提交】本机真实节点配置（.gitignore 已忽略）
 ```
@@ -161,7 +163,7 @@ local/                        ← 【不提交】本机真实节点配置（.git
 | # | 动作 | 为什么需要同意 |
 |---|---|---|
 | 1 | `git commit` | 落盘即进入历史 |
-| 2 | `git push` | 一旦推到公开仓库就**收不回来**（2026-10-12 那次泄漏节点信息的提交就是靠 force-push 补的，且旧 commit 仍可按 SHA 取到） |
+| 2 | `git push` | 一旦推到公开仓库就**收不回来**（2026-10-12 那次泄漏节点信息的提交就是靠 force-push 补的 —— 而 force-push 只重置分支指针，旧对象仍按 SHA 可取；最终是**删库重建**才彻底清掉） |
 | 3 | 改 `singbox_version.txt` | 这是“唯一版本真相”，改了等于宣布全仓库已对齐新版 |
 | 4 | 改矩阵里的 `adopt` | 等于替用户决定“用不用这个新功能” |
 | 5 | **删除任何现有字段** | 删错了就是真机没网（L4 教训：当年删了 `auto_detect_interface`） |
@@ -186,7 +188,8 @@ local/                        ← 【不提交】本机真实节点配置（.git
   `FATAL ... initialize rule-set[n]: ... detour to an empty direct outbound makes no sense`。
   这是「下载用的 direct 出站是空的」。处理：给 `direct-download` 加
   `domain_resolver`（或 `bind_interface` / `inet4_bind_address` / `routing_mark`）。
-  **`domain_strategy` / `network_strategy` 不算数**（已 `schema:"omit"`）。
+  **`domain_strategy` 不算数**（已 `schema:"omit"`，1.14 上写了直接 FATAL —— L1 的由来）。
+  ⚠️ **`network_strategy` 不是例外，它是真字段**：`option/outbound.go` 里它是 `*NetworkStrategy`，**没有** `schema:"omit"`；实测 `network_strategy: "default"` 就能让“空 direct”判定为非空（能拿去当下载出站）。本仓库不用它，只因图形客户端兼容性存疑，不是因为它无效。
 - 修完必须跑 `python tools/audit.py --run --run-seconds 20` 复现一次，确认不再有 `FATAL`；
   静态检查 + `check` + `run` 三层都过才算修完。
 
@@ -257,7 +260,13 @@ WARN 可以交付，但必须在回复里向用户说明。
   否则报 ERROR `lessons_missing_gate`（防止“文档声称有防护、代码里根本没实现”）。
 - 方向二：`tools/audit.py` 里每个非框架 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 里出现过，
   否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
-- 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
+- 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `skip_check_template`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
+- 另有 `lesson_missing_gate_line`：每条教训正文里必须有 `**门禁**：` 行（没有门禁就写「无」）——否则台账的机读格式只是口号。
+
+**模板文字检查**（`audit_template_text()`，每次跑都执行）：
+- `templates/groups.json` 的 `_rules_of_thumb` 是全文唯一**无人消费**的部分（没有工具读它），因此最容易过期。
+- 出现「`resolve` + 末尾」这类已被推翻的口径 → ERROR `template_thumb_stale`；
+  且必须保留一条同时提到 `resolve` 与 `hijack-dns` 的条目。
 
 **防泄漏扫查**（`audit_redaction()`，每次跑都执行）：
 - 范围 = `git ls-files` 的全部被跟踪文件 + **commit message**（后者只扫 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后）。
@@ -281,7 +290,7 @@ WARN 可以交付，但必须在回复里向用户说明。
 - 目标 **sing-box 版本号**（正式版）
 - 目标 **平台**（Android / iOS / Windows）
 - 新增节点落在**哪个分流组**
-- audit 结果（四项门禁是否全绿，有哪些 WARN）
+- audit 结果（本次涉及的门禁是否全绿，有哪些 WARN）
 - 完整 JSON（可复制粘贴的那种）
 
 不得声称"已实测联网可用"——除非用户在本机真跑了 `sing-box run`。
