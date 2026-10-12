@@ -644,17 +644,43 @@ def audit_repo_rules(cfg, rep: Report):
     if dns_final and dns_final not in dns_tags:
         rep.error("dns_final_missing", f"dns.final = {dns_final!r} 不在 dns.servers 中")
 
-    # 4) AD 组只能放 block / direct
+    # 4) AD 组只能放 block / direct；默认值必须是 block，否则整个去广告链路静默失效
     for i, o in enumerate(outs):
         if not isinstance(o, dict):
             continue
-        if o.get("tag") == "AD" and o.get("type") == "selector":
+        if o.get("tag") != "AD":
+            continue
+        if o.get("type") == "selector":
             bad = [r for r in (o.get("outbounds") or []) if r not in ("block", "direct")]
             if bad:
                 rep.error(
                     "ad_group_polluted",
                     f"AD 分流组包含非 block/direct 出站：{bad}；广告拦截组不得放入代理节点",
                 )
+            # 详见 docs/LESSONS.md L17：default 被改成 direct（或写了个不存在的 tag）时，
+            # 规则照样命中 AD，但连接被放行 —— 没有任何报错，广告静默漏过。
+            if o.get("default") != "block":
+                rep.error(
+                    "ad_group_default_not_block",
+                    f"AD 分流组的 default = {o.get('default')!r}，必须是 \"block\"："
+                    "广告规则命中 AD 后若默认出站不是 block，广告会静默直连放行",
+                )
+
+    # 4b) 用 block 出站拦广告时，日志级别会被 ERROR 刷屏（见 docs/LESSONS.md L16）
+    has_block = any(
+        isinstance(o, dict) and o.get("type") == "block" for o in outs
+    )
+    log_opts = cfg.get("log")
+    if has_block and isinstance(log_opts, dict) and not log_opts.get("disabled"):
+        level = str(log_opts.get("level", "info")).lower()
+        if level not in ("fatal", "panic"):
+            rep.info(
+                "ads_block_log_noise",
+                f"log.level = {level!r}（未被 disabled）：block 出站每拦一次连接会写一条 INFO "
+                "+ 一条 ERROR（... using outbound/selector[AD]: operation not permitted）。"
+                "这是拦截成功的正常现象、不是故障；嫌吵可把 log.level 设为 \"panic\" "
+                "或 log.disabled=true（详见 docs/LESSONS.md L16）",
+            )
 
     # 5) http_clients 与 download_detour 冲突
     if cfg.get("http_clients"):
@@ -911,9 +937,9 @@ AUDIT_SRC = Path(__file__).resolve()
 
 
 def _audit_gate_codes():
-    """扫出 tools/audit.py 里所有真实的门禁 code。"""
+    """扫出 tools/audit.py 里所有真实的门禁 code（含 INFO 级，它们也是可追溯的通知）。"""
     src = AUDIT_SRC.read_text(encoding="utf-8")
-    return set(re.findall(r'rep\.(?:error|warn)\(\s*"([a-z0-9_]+)"', src))
+    return set(re.findall(r'rep\.(?:error|warn|info)\(\s*"([a-z0-9_]+)"', src))
 
 
 def _lessons_gate_codes():

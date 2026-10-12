@@ -340,6 +340,58 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 
 ---
 
+## L16 「AD 分流组有错/拦截失效」的日志噪音与误报
+
+**现象**（用户真机原话，m02378）
+
+> 「好像日志里面总是报这个 ad 分流组有错，你看看这是问题吗
+> ERROR[0011] [449027481 5ms] connection: open connection to 142.250.198.40:443 using outbound/selector[AD]: operation not permitted」
+
+**结论：这是拦截成功的正常日志，不是故障，也不是配置错误。**
+
+**根因**
+
+- `protocol/block/outbound.go`：
+  `func (h *Outbound) DialContext(...) (net.Conn, error) { h.logger.InfoContext(ctx, "blocked connection to ", destination); return nil, syscall.EPERM }`
+- `route/conn.go:105-123` 的 `NewConnection`：拨号出错就把 err 包一层 `E.Cause(err, "open connection to ", remoteString, " using outbound/", outbound.Type(), "[", outbound.Tag(), "]")`，
+  然后 `m.logger.ErrorContext(ctx, err)` —— **拦截走的就是这条“拨号失败”路径**。
+- 所以拦一次广告 = 一行 `INFO outbound/block[block]: blocked connection to ...`
+  + 一行 `ERROR connection: open connection to ... using outbound/selector[AD]: operation not permitted`。
+- 本机实测（`C:/Users/Administrator/_probe/ademo/ad.json`，mixed 入站 + AD selector(default block)）：
+  日志输出与用户手机完全一致，`curl` 返回 SSL 错误（rc=35），即连接被切断。
+
+**为什么容易误判**
+
+- 日志写的是 `outbound/selector[AD]` 而不是 `block` —— 因为它打印的是**本连接被选中**的那层出站；
+  `AD` 是 selector，真正拨号的是它当前选中的 `block`。
+- 同一个 `142.250.198.0/24` 段（Google）反复出现，因为 Android 后台反复重试推送/统计接口、
+  而这些域名确实在 `jinx-ads`（`firebaselogging-pa.googleapis.com`、`crashlyticsreports-pa.googleapis.com`、
+  `adservice.google.com` 等，共 3751 条 `domain_suffix`）/`awanue-ads` 里。
+- 本机解析 `firebaselogging-pa.googleapis.com` → `172.217.112.4` 等，`crashlyticsreports-pa.googleapis.com` → `142.251.210.142` ——
+  与用户日志同属 Google。
+
+**修法**
+
+1. **不需要改任何配置**。`AD` selector 的 `default: "block"` 正确，广告确实被拦住了。
+2. 嫌日志刷屏（手机上会持续写盘、耗电），把日志压到静音：
+   `"log": { "level": "panic", "timestamp": true }` 或 `"log": { "disabled": true }`
+   （`option/options.go:69-75` 的 `LogOptions`：`disabled` / `level` / `output` / `timestamp`）。
+3. 若想让广告**真的失败而不是被切断**也可以，那是 `action: "reject"` 而**不是** `block` 出站，
+   但**不建议**：`reject` 支持不了 AD 分组的运行时切换，而 `AD` selector 是骨架的一部分。
+
+**对比：`block` 出站 vs `action: reject`（本机实测）**
+
+| | 日志 | 客户端看到 | 能否被 selector 切换 |
+|---|---|---|---|
+| `AD` → `block` 出站 | INFO + **ERROR** 各一行 | TCP RST（SSL error） | 能 |
+| `action: "reject"` | 仅 DEBUG `router: connection closed: rejected` | TCP RST（SSL error） | 不能 |
+
+**门禁**：`ads_block_log_noise`, `ad_group_default_not_block`
+
+**涉及**：`tools/audit.py`（4b 节 INFO + 4 节 default 校验；不要改成 WARN，否则自检恒不干净）
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

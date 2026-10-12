@@ -261,6 +261,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | `FATAL ... http_client is conflict with deprecated download_detour field` | 两者同时出现 | 删掉 `download_detour` |
 | `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` / `network_strategy` 已被 `schema:"omit"`，填了也不起作用、仍算空** |
 | 启动成功但某类流量走错 | 平台能力 / 规则顺序 | 查 `docs/PLATFORM-MATRIX.md`、检查 `route.rules` 顺序 |
+| 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
 | **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
 

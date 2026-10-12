@@ -61,6 +61,7 @@ EOF
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
 | 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」** |
 | 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
+| 13 | **日志里出现 `using outbound/selector[AD]: operation not permitted` 是正常的**，不是 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -205,9 +206,9 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 五项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌）+ 教训台账一致性 + sing-box check
+# 六项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义）+ 教训台账一致性 + sing-box check
 # audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
-# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn code 双向对得上
+# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 
@@ -231,11 +232,13 @@ python tools/gen-docs.py
 WARN 可以交付，但必须在回复里向用户说明。
 
 **教训台账一致性**（`audit_lessons()`，每次跑都执行，不需要额外参数）：
-- 方向一：`docs/LESSONS.md` 里 `**门禁**：` 声明的每个 code 必须在 `tools/audit.py` 源码里真实存在，
+- 方向一：`docs/LESSONS.md` 里 `**门禁**：` 声明的每个 code 必须在 `tools/audit.py` 源码里真实存在（`rep.error` / `rep.warn` / `rep.info` 都算），
   否则报 ERROR `lessons_missing_gate`（防止“文档声称有防护、代码里根本没实现”）。
 - 方向二：`tools/audit.py` 里每个非框架 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 里出现过，
   否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
 - 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
+
+> 注意：`ads_block_log_noise` 故意做成 **INFO** 而不是 WARN —— 它描述的是“正常现象”，若做成 WARN 则每次自检都不干净，反而让人麻木。
 
 `--version` 用来**预演**「假设客户端升级到这个版本会怎样」，例如
 `python tools/audit.py --version 1.15.0 profiles/1.14/ios-lazy.json` 会提前告诉你要删 `stack`。

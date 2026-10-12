@@ -115,6 +115,7 @@ python tools/upgrade-check.py
 | 把用户给的真实节点直接写进 `profiles/` 并提交 | 真实节点写 `local/<platform>.json`（不提交）；`audit.py` 的 `placeholder_server` 检查会报 ERROR 拦住 |
 | 广告拦截用了 `MetaCubeX` 的 `category-ads-all` | 改用 Jinx 的 `jinx-ads` + 秋风 `awanue-ads`，并配套 `jinx-direct` 放行集 |
 | 规则集顺序随意摆 | 顺序错了等于没加：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| 看到日志里 `using outbound/selector[AD]: operation not permitted` 以为是坏了 | 这是 `block` 出站拦广告的**正常**输出（`syscall.EPERM`），说明广告确实被拦了。不用改配置；嫌刷屏就把 `log.level` 设成 `"panic"`。详见 `docs/LESSONS.md` L16 |
 | tun 配置里没有 `route.auto_detect_interface` | **能启动、不报错，但真机完全没网**（节点全无延迟、只有上传没下载、内存爆 1GB）。这是 Android 唯一可行的防回环手段，`check` 对此完全静默 |
 | 拿本机跑出来的连通性当证据 | 本机有 OpenClash 网关会劫持 DNS（无 fakeip 的最小配置也会被返回 `198.18.0.x`），本机结果一律作废。只读配置 / 官方文档 / 源码 |
 
