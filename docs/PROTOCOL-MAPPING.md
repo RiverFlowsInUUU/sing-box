@@ -219,18 +219,21 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 
 ## 3. 插入分流组（用户指定落点）
 
-三个组是 selector，位置固定：
+三个组位置固定，**`Proxy` 本身就是 urltest**（不再有单独的 `Auto` 组）：
 
 ```jsonc
-{ "type": "selector", "tag": "Proxy", "outbounds": ["Auto", "Node-01", "..."], "default": "Auto" }
-{ "type": "selector", "tag": "AI",    "outbounds": ["Auto", "Node-01", "..."], "default": "Auto" }
-{ "type": "selector", "tag": "AD",    "outbounds": ["block", "direct"],       "default": "block" }
+{ "type": "urltest", "tag": "Proxy", "outbounds": ["Node-01", "..."],
+  "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
+{ "type": "selector", "tag": "AI",  "outbounds": ["Proxy", "Node-01", "..."], "default": "Proxy" }
+{ "type": "selector", "tag": "AD",  "outbounds": ["block", "direct"],        "default": "block" }
 ```
 
-- 用户说"放 Proxy" → 把新节点 tag 加进 `Proxy.outbounds`；若该节点同时也应进 AI，就两边都加。
+- 用户说"放 Proxy" → 把新节点 tag 加进 `Proxy.outbounds`。`Proxy` 是 urltest，加进去就等于加进自动测速。
+- 用户说"放 AI" → 加进 `AI.outbounds`；`AI` 默认指向 `Proxy`，所以不指定也可以直接跟随优选。
 - **AD 组只放 `block` / `direct`，永远不把代理节点放进 AD。**
-- 新节点建议同时加入 `Auto`（urltest）的 `outbounds`，否则不会被自动测速选中。
-- tag 一旦被规则集/规则引用就不能随便改名：`Proxy` `AI` `AD` `direct` `block` `Auto` 是保留名。
+- tag 一旦被规则集/规则引用就不能随便改名：`Proxy` `AI` `AD` `direct` `block` 是保留名。
+- `route.final` 固定指向 `Proxy`，即全局兜底走 urltest 优选。
+- `route.auto_detect_interface` **必须是 `true`**，否则流量回灌 tun（见 `WORKFLOW.md` 的铁律一节）。
 
 ## 4. 常见解码坑
 
@@ -243,6 +246,7 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 | `invalid public_key` | reality `pbk` 抄错 | 原样复制，别加空格 |
 | 有 TLS 但握手失败 | `security=reality` 漏写 `reality` 块 | 补 `reality.enabled/public_key` |
 | `http_client is conflict with deprecated download_detour` | 两者同时存在 | 删 `download_detour`，只用 `http_client` |
+| 手机上能启动、但节点全无延迟 / 只有上传没下载 / 内存爆 1GB | 缺 `route.auto_detect_interface: true`，出站回灌 tun | 在 `route` 里加 `"auto_detect_interface": true` |
 
 ## 5. 自检清单（写完 outbound 后逐条过）
 
@@ -251,5 +255,5 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 3. `server` / `server_port` / 凭据三项齐全
 4. TLS 需求满足（trojan/anytls/hysteria2/tuic 必须有；vless 看 `security`）
 5. 没有 `udp` / `tfo` / `domain_strategy` 这类老字段
-6. tag 无重复、已加入目标分流组和 `Auto`
+6. tag 无重复、已加入目标分流组的 `outbounds`（`Proxy` 是 urltest，加进去即自动测速）
 7. 跑 `python tools/audit.py <profile> --platform <p> --check` 全绿

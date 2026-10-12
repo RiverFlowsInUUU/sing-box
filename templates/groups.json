@@ -3,7 +3,7 @@
   "outbounds": [
     {
       "type": "urltest",
-      "tag": "Auto",
+      "tag": "Proxy",
       "outbounds": [],
       "url": "http://www.gstatic.com/generate_204",
       "interval": "3m",
@@ -11,19 +11,11 @@
     },
     {
       "type": "selector",
-      "tag": "Proxy",
-      "outbounds": [
-        "Auto"
-      ],
-      "default": "Auto"
-    },
-    {
-      "type": "selector",
       "tag": "AI",
       "outbounds": [
-        "Auto"
+        "Proxy"
       ],
-      "default": "Auto"
+      "default": "Proxy"
     },
     {
       "type": "selector",
@@ -51,10 +43,12 @@
     }
   ],
   "_rules_of_thumb": [
-    "Auto 里放所有代理节点，Proxy / AI 默认指向 Auto，这样加节点只需改一处",
-    "Proxy 里可以额外放 Auto 之外的指定节点，供用户手动切",
+    "Proxy 本身就是 urltest，里面放所有代理节点；它是 route.final 的默认出口，也是全局兜底。不再有单独的 Auto 组。",
+    "AI 默认指向 Proxy（即走 urltest 优选），可以额外把个别节点放进 AI，供用户手动切。",
+    "因为 Proxy 是 urltest，路由规则不要拿它当兜底之外的语义用；需要「指定出口」时用 AI 或具体节点 tag。",
     "AD 的 outbounds 永远只有 block 和 direct（tools/audit.py 会检查）",
-    "tag 名 Proxy / AI / AD / Auto / direct / block 是保留名，节点不得占用",
-    "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense"
+    "tag 名 Proxy / AI / AD / direct / block 是保留名，节点不得占用（Proxy 现在是 urltest 组，节点更不能占用）",
+    "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense",
+    "route 里必须写 auto_detect_interface: true（tun + auto_route 场景下不写会导致出站 socket 不被 protect，流量回灌 tun，表现为节点全无延迟/只有上传没下载/内存暴涨）"
   ]
 }

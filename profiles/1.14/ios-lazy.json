@@ -155,7 +155,7 @@
     },
     {
       "type": "urltest",
-      "tag": "Auto",
+      "tag": "Proxy",
       "outbounds": [
         "Node-01",
         "Node-02",
@@ -169,29 +169,16 @@
     },
     {
       "type": "selector",
-      "tag": "Proxy",
-      "outbounds": [
-        "Auto",
-        "Node-01",
-        "Node-02",
-        "Node-03",
-        "Node-04",
-        "Node-05"
-      ],
-      "default": "Auto"
-    },
-    {
-      "type": "selector",
       "tag": "AI",
       "outbounds": [
-        "Auto",
+        "Proxy",
         "Node-01",
         "Node-02",
         "Node-03",
         "Node-04",
         "Node-05"
       ],
-      "default": "Auto"
+      "default": "Proxy"
     },
     {
       "type": "selector",
@@ -287,6 +274,7 @@
       }
     ],
     "final": "Proxy",
+    "auto_detect_interface": true,
     "default_domain_resolver": {
       "server": "dns-bootstrap"
     },

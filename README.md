@@ -16,10 +16,9 @@
 2. 把里面**所有占位节点**（`node-0X.example.com` 那几条）删掉。
 3. 按 `docs/PROTOCOL-MAPPING.md` 把你的分享链接翻译成节点对象，追加进 `outbounds`。
 4. 把新节点的 `tag` 加进对应分流组的 `outbounds` 数组：
-   - `Proxy` — 普通外网
-   - `AI` — AI 类站点
+   - `Proxy` — 普通外网（**本身就是 urltest 自动测速组，加进去即完成**）
+   - `AI` — AI 类站点（默认跟随 `Proxy`）
    - `AD` — 广告拦截（**只能放 `block` / `direct`**）
-   - 建议同时加进 `Auto`（自动测速组）
 5. 导入客户端。
 
 更省事的做法：把仓库链接 + 分享链接 + 目标平台直接丢给 AI，让它按 `AGENTS.md` 生成。
@@ -31,7 +30,7 @@
 ## 仓库结构
 
 ```
-AGENTS.md                     AI 入口与 8 条铁律
+AGENTS.md                     AI 入口与 12 条铁律
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
@@ -46,7 +45,7 @@ profiles/1.14/                可运行配置（占位节点）
 templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
-  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + sing-box check
+  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + sing-box check
   upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
 archive/                      旧大版本配置归档

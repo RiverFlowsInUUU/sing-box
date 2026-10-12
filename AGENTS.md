@@ -25,11 +25,13 @@
 | 3 | **已移除字段 = 致命错误**。见 `docs/VERSION-MATRIX.md` 的"已移除"列 |
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
-| 6 | **分流组只有三个**：`Proxy`（默认代理）、`AI`、`AD`；再加 `direct` 与 `block` 两个出站。国内/私有/广告**不出组**，用规则直连或落 AD |
+| 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`、`AD`；再加 `direct` 与 `block` 两个出站。国内/私有/广告**不出组**，用规则直连或落 AD |
 | 7 | **任何时候仓库都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。`audit.py` 有 `placeholder_server` 检查兜底 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
+| 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」** |
+| 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -76,7 +78,7 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
   desktop-lazy.json
   android-lazy.json
   ios-lazy.json
-templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / Auto / direct / block）
+templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
   audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + sing-box check
@@ -96,6 +98,7 @@ local/                        ← 【不提交】本机真实节点配置（.git
 3. 读 profiles/<ver>/{platform}-lazy.json        # 拿骨架
 4. 按映射表把链接解成 outbound，插到出站列表
 5. 把 outbound tag 加进用户指定的分流组（Proxy / AI / AD）的 outbounds 数组
+   —— `Proxy` 是 urltest 组，**把节点直接加进 `Proxy` 就是加进自动测速**（不再有单独的 `Auto` 组）
 6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
 7. 输出完整 JSON（不是 diff、不是片段）
 
@@ -123,7 +126,8 @@ local/                        ← 【不提交】本机真实节点配置（.git
 2. FATAL unknown field  → 字段名写错或版本不支持 → 查 VERSION-MATRIX
 3. FATAL legacy/removed → 用了已移除字段 → 查 VERSION-MATRIX 的迁移写法
 4. 静默但功能不对      → 查 PLATFORM-MATRIX 平台能力
-5. 把这次踩坑写回对应文档
+5. **能启动但没网**     → 先查 `route.auto_detect_interface`（见下方分岔点），再查 DNS detour
+6. 把这次踩坑写回对应文档
 ```
 
 **分岔点：错误是 check 阶段还是 run 阶段？**
@@ -136,6 +140,34 @@ local/                        ← 【不提交】本机真实节点配置（.git
   **`domain_strategy` / `network_strategy` 不算数**（已 `schema:"omit"`）。
 - 修完必须跑 `python tools/audit.py --run --run-seconds 20` 复现一次，确认不再有 `FATAL`；
   静态检查 + `check` + `run` 三层都过才算修完。
+
+**第三层陷阱：`check` 过了、`run` 也活着，手机上仍然没网。**
+
+已收录的典型症状：**能启动、但节点全部没有延迟、只有上传流量没有下载流量、连接数上万、内存飙到 1GB**。
+
+根因是配置里缺 `route.auto_detect_interface: true`。机制（源码 `common/dialer/default.go`）：
+
+```
+if defaultOptions.BindInterface != "" && !disableDefaultBind { ... }
+else if networkManager.AutoDetectInterface() && !disableDefaultBind {
+    // Android 图形客户端走这一支
+    bindFunc := networkManager.ProtectFunc()   // → VpnService.protect(fd)
+    dialer.Control = control.Append(dialer.Control, bindFunc)
+    listener.Control = control.Append(listener.Control, bindFunc)
+}
+```
+
+没写这个字段 ⇒ 整个 `else if` 不成立 ⇒ 出站 socket **一个 Control 都不挂** ⇒ Android VpnService
+把自己 App 的流量也抓进隧道（`Settings.allowBypass` 默认 false）⇒ 出站回灌 tun ⇒
+节点测速全部失败（→ 全无延迟）、流量只进不出（→ 只有上传）、urltest 3 分钟一轮反复重试（→ 连接数与内存暴涨）。
+
+官方原文（`docs/configuration/inbound/tun.md`）：
+> To avoid traffic loopback, set `route.auto_detect_interface` or `route.default_interface` or `outbound.bind_interface`
+
+Android 上后两者都不可用（VpnService 托管环境没有可用网卡名），**唯一可行的是 `auto_detect_interface`**。
+官方 `docs/manual/proxy/client.md` 的三份客户端示例也都写了 `"auto_detect_interface": true`。
+
+注意：`sing-box check` 对这个问题**完全静默**（`check` 只反序列化），所以只能靠 `audit.py` 的静态门禁兜住。
 
 ## 4. 校验命令
 

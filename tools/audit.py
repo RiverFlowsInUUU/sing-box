@@ -638,6 +638,91 @@ def audit_repo_rules(cfg, rep: Report):
                 )
 
 
+GROUP_TYPES = ("selector", "urltest", "block", "dns")
+
+
+def audit_loopback_guard(cfg, rep: Report):
+    """tun 场景必须防止出站流量回灌 tun，否则表现为「能启动但没网」。
+
+    官方 docs/configuration/inbound/tun.md：To avoid traffic loopback, set
+    `route.auto_detect_interface` or `route.default_interface` or `outbound.bind_interface`。
+
+    为什么必须卡这一条（源码级）：common/dialer/default.go 的 NewDefault 里，只有
+    `networkManager.AutoDetectInterface() && !disableDefaultBind` 成立时才会给
+    dialer.Control / listener.Control 挂上 ProtectFunc()（Android = VpnService.protect）；
+    没写这个字段 ⇒ 一个 Control 都不挂 ⇒ 出站 socket 被 VpnService 自己抓回隧道 ⇒
+    回环：节点测速全部失败（无延迟）、只有上传没下载、连接数暴涨、内存飙升。
+    在 Android 上 route.default_interface / outbound.bind_interface 都不可用
+    （VpnService 托管环境），唯一可行的是 route.auto_detect_interface: true。
+    """
+    inbounds = cfg.get("inbounds") or []
+    has_tun = any(isinstance(ib, dict) and ib.get("type") == "tun" for ib in inbounds)
+    if not has_tun:
+        return
+    route = cfg.get("route") or {}
+    if route.get("auto_detect_interface") is True:
+        return
+    if route.get("default_interface"):
+        return
+    outbounds = cfg.get("outbounds") or []
+    dialing = [
+        (i, ob)
+        for i, ob in enumerate(outbounds)
+        if isinstance(ob, dict) and ob.get("type") not in GROUP_TYPES
+    ]
+    if dialing and all(ob.get("bind_interface") for _, ob in dialing):
+        return
+    rep.error(
+        "tun_without_auto_detect_interface",
+        "有 tun 入站但 route.auto_detect_interface / route.default_interface / "
+        "outbounds[].bind_interface 三者都没有：出站 socket 不会被 protect 或绑定网卡，"
+        "流量会回灌 tun（症状：能启动但没网、节点全无延迟、只有上传没下载、内存暴涨）。"
+        "请加 route.auto_detect_interface: true",
+    )
+
+
+def audit_template(rep: Report):
+    """校 templates/groups.json（固定分流组骨架）。
+
+    这份文件是每个 profile 的出站骨架，它自身写错了，生成的配置就会集体写错。
+    重点：Proxy 必须是 urltest（m01246 起不再有单独的 Auto 组）。
+    """
+    path = ROOT / "templates" / "groups.json"
+    if not path.exists():
+        rep.error("template_missing", "templates/groups.json 不存在")
+        return
+    try:
+        tpl = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as ex:
+        rep.error("template_json", f"templates/groups.json 解析失败：{ex}")
+        return
+    outbounds = tpl.get("outbounds") or []
+    by_tag = {ob.get("tag"): ob for ob in outbounds if isinstance(ob, dict)}
+    required = ("Proxy", "AI", "AD", "direct", "block", "direct-download")
+    for tag in required:
+        if tag not in by_tag:
+            rep.error("template_group_missing", f"templates/groups.json 缺固定组 `{tag}`")
+    if "Auto" in by_tag:
+        rep.error(
+            "template_legacy_auto",
+            "templates/groups.json 里仍有 `Auto` 组：Proxy 本身就是 urltest，不再需要单独的 Auto",
+        )
+    proxy = by_tag.get("Proxy")
+    if proxy and proxy.get("type") != "urltest":
+        rep.error(
+            "template_proxy_not_urltest",
+            f"Proxy 必须是 urltest（当前 {proxy.get('type')}）——它是全局默认出口与兜底",
+        )
+    if proxy and not proxy.get("url"):
+        rep.error("template_proxy_no_url", "Proxy (urltest) 必须有 url，否则节点测速无意义")
+    ai = by_tag.get("AI")
+    if ai and ai.get("default") != "Proxy":
+        rep.warn("template_ai_default", "AI 的 default 建议指向 Proxy（跟随即全局优选）")
+    ad = by_tag.get("AD")
+    if ad and set(ad.get("outbounds") or []) - {"block", "direct"}:
+        rep.error("template_ad_polluted", "AD 只允许 block / direct")
+
+
 def audit_platform_caps(cfg, rep: Report, platforms):
     if {"android", "ios"} & platforms:
         for i, ib in enumerate(cfg.get("inbounds", [])):
@@ -650,6 +735,13 @@ def audit_platform_caps(cfg, rep: Report, platforms):
         for i, ob in enumerate(cfg.get("outbounds", [])):
             if isinstance(ob, dict) and ob.get("domain_resolver") == "dns-local":
                 rep.warn("android_resolver", f"outbounds[{i}] 依赖 local DNS，Android 上不总能工作")
+    if "android" in platforms:
+        route = cfg.get("route") or {}
+        if route.get("override_android_vpn") and not route.get("auto_detect_interface"):
+            rep.warn(
+                "android_override_vpn_no_adi",
+                "route.override_android_vpn 需要 route.auto_detect_interface 才生效，当前未开",
+            )
 
 
 def run_singbox_check(binary: str, cfg_path: Path, rep: Report):
@@ -824,18 +916,25 @@ def main():
             version = "0.0.0"
 
     targets = []
+    failed = False
     if args.files:
         targets = [Path(f) for f in args.files]
     else:
         targets = sorted(PROFILES.rglob("*.json"))
-
+        template_rep = Report("templates/groups.json")
+        audit_template(template_rep)
+        if template_rep.items:
+            for lv, code, msg in template_rep.items:
+                print(f"[{lv[0]}] templates/groups.json: {msg}")
+        if not template_rep.ok():
+            failed = True
+    
     if not targets:
         print("没有找到任何配置文件", file=sys.stderr)
         return 2
 
     binary = None if args.no_check else find_singbox(args.singbox)
     results = []
-    failed = False
 
     for t in targets:
         if not t.exists():
@@ -855,6 +954,7 @@ def main():
         audit_matrix(cfg, rep, matrix, version, platforms)
         audit_platform_caps(cfg, rep, platforms)
         audit_repo_rules(cfg, rep)
+        audit_loopback_guard(cfg, rep)
         if binary:
             run_singbox_check(binary, t, rep)
             if args.run:

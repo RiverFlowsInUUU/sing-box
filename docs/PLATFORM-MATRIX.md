@@ -35,6 +35,28 @@
 | `platform` | ✅ | ✅ | ✅ |
 | `dns_mode` / `dns_address`（1.15.0+） | 待官方确认 | 待官方确认 | 待官方确认 |
 
+## 1b. 防回环：`route.auto_detect_interface`
+
+| 防回环手段 | Android (SFA) | Apple (SFI) | Desktop (SFW) |
+|---|---|---|---|
+| `route.auto_detect_interface: true` | ✅ **唯一可行** | ✅ **唯一可行** | ✅ |
+| `route.default_interface` | ❌ 无可用网卡名 | ❌ | ✅ |
+| `outbound[].bind_interface` | ❌ 同上 | ❌ | ✅（仅 Linux） |
+| `outbound[].inet4_bind_address` | ✅ 可作为补充 | ✅ | ✅ |
+
+**三个平台都必须写 `route.auto_detect_interface: true`。**
+
+- Android 上它不是文档里说的"仅 Linux/Windows/macOS"：`constant/os.go` 里
+  `IsLinux = goos.IsLinux == 1 || goos.IsAndroid == 1`，平台检查因此放行；
+  实际走 `ProtectFunc()` → `VpnService.protect(fd)`（Android VPNService 的 socket 豁免机制）。
+- **不写的后果**：出站 socket 一个 Control 也不挂 → 自己 App 的流量被 VpnService 抓回隧道 →
+  回环。症状：能启动但没网、节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB。
+- `sing-box check` 对此**完全静默**，只能靠 `tools/audit.py` 的 `tun_without_auto_detect_interface` 拦。
+- `route.override_android_vpn` 在图形客户端**无效**（`experimental/libbox/monitor.go` 的
+  `OverrideAndroidVPN()` 恒返回 `false`），写了也没副作用，但不要指望它。
+- `network_strategy` / `network_type` / `fallback_network_type` / `fallback_delay`
+  官方标注「仅 Android 与 Apple 图形客户端，且需要 `auto_detect_interface` 开启」。
+
 ### 结论（写配置时）
 - **`ios-lazy.json` / `android-lazy.json` 里不要写 `strict_route`。** 写了不报错但无意义，且会让用户误以为已生效。
 - `stack` 在 1.14 正式版仍合法（1.15.0 才废弃），三个平台都可以写；一旦升到 1.15+ 就删掉。
@@ -71,6 +93,7 @@
 | `strict_route` | `true` | **删除** | **删除** |
 | tun `address` | `172.19.0.1/30` | `172.19.0.1/30` | `172.19.0.1/30` + `fdfe:dcba:9876::1/126` |
 | `clash_api` | 保留（外部控制器） | **删除** | **删除** |
+| `route.auto_detect_interface` | `true` | `true` | `true` |
 | `cache_file.cache_id` | `sb-template-1.14` | `sb-template-1.14-android` | `sb-template-1.14-ios` |
 | 其余（dns/route/outbounds/http_clients） | 三平台完全一致 | 同左 | 同左 |
 

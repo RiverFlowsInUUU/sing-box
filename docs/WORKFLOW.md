@@ -21,6 +21,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 | 平台能力差异 | `docs/PLATFORM-MATRIX.md` + `tools/audit.py` |
 | 引用完整性（出站/规则集/DNS server 不存在） | `tools/audit.py`（`check` 不校验！） |
 | 规则集**顺序**（放行/拦截/分流先后错了等于没加） | `tools/audit.py` 的 Jinx 顺序检查 |
+| **tun 出口回灌**（能启动但没网，`check` 全静默） | `tools/audit.py` 的 `tun_without_auto_detect_interface` 门禁 |
 | 上游又改了 | `tools/upgrade-check.py` |
 
 ## 一、目录职责
@@ -72,7 +73,7 @@ archive/                   旧大版本配置归档
 1. **节点分享链接**（可多个）：`vless://…` `vmess://…` `trojan://…` `hysteria2://…` `ss://…` …
 2. **落点分流组**：`Proxy`（普通外网）、`AI`（AI 类网站走更干净的出口）、`AD`（广告拦截）
 3. **目标平台**：Android / iOS / Windows
-4. （可选）**是否把这些节点合并进现有 Auto 组**
+4. （可选）**AI 组是否要单独指定节点**（默认跟随 `Proxy` 这个 urltest 优选）
 
 缺哪个就问，不要自己猜。用户只说"A 放 AI 组"，那就只动 AI 组。
 
@@ -103,9 +104,10 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 从 `profiles/<版本>/<平台>-lazy.json` 拿骨架（**不要新写一份配置**），然后：
 
 1. 在 `outbounds[]` 末尾追加节点对象，`tag` 用「节点名-地区-协议」这种可读名，
-   且**不得与既有 tag 重复**（`Proxy` `AI` `AD` `Auto` `direct` `block` 是保留名）。
+   且**不得与既有 tag 重复**（`Proxy` `AI` `AD` `direct` `block` 是保留名；`Proxy` 是 urltest 组，节点更不能占用）。
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
-   建议同时加进 `Auto`（urltest）——除非用户明确说不要。
+   `Proxy` 本身就是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
+   `AI` 默认指向 `Proxy`，用户没特别要求就不用单独加节点。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
    其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
    `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
@@ -231,6 +233,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | `FATAL ... http_client is conflict with deprecated download_detour field` | 两者同时出现 | 删掉 `download_detour` |
 | `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` / `network_strategy` 已被 `schema:"omit"`，填了也不起作用、仍算空** |
 | 启动成功但某类流量走错 | 平台能力 / 规则顺序 | 查 `docs/PLATFORM-MATRIX.md`、检查 `route.rules` 顺序 |
+| **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
 
 ### ⚠️ 最重要的一条：`check` 过了不代表启动得了
@@ -255,6 +258,64 @@ python tools/audit.py --run --run-seconds 20
 
 `--run` 会自己把 tun 入站临时替成 `mixed`（避免 Windows 建假网卡），把 `cache_file.path` 指到临时目录，
 跑 20 秒后主动终止，只看输出里有没有 `FATAL`。CI 里已经默认带上这一步。
+
+### ⚠️ 第二重要的一条：能启动、也不报错，但就是没网
+
+`route.auto_detect_interface` 缺失属于**第三层问题**：静态结构对、`check` EXIT=0、`run` 也能活着，
+但手机上一用就废。症状固定好认：
+
+- 首页/仪表盘显示内存占用瞬间 1GB
+- 瞬间爆出上万个入站与出站请求
+- 所有节点都测不出延迟（等于全不可用）
+- 只有上传流量，没有下载流量
+
+机制（源码 `common/dialer/default.go` 的 `NewDefault`）：
+
+```
+if defaultOptions.BindInterface != "" && !disableDefaultBind { ... }
+else if networkManager.AutoDetectInterface() && !disableDefaultBind {
+    if platformInterface != nil && platformInterface.UsePlatformNetworkInterfaces() {
+        bindFunc := networkManager.ProtectFunc()        // Android: VpnService.protect(fd)
+        dialer.Control = control.Append(dialer.Control, bindFunc)
+        listener.Control = control.Append(listener.Control, bindFunc)
+    }
+}
+```
+
+`networkManager.AutoDetectInterface()` 直接返回 `route.auto_detect_interface` 的值。没写 ⇒ 整个分支不成立 ⇒
+出站 socket **一个 Control 也不挂** ⇒ Android VpnService 把本 App 自己的流量也抓进隧道
+（`Settings.allowBypass` 默认 `false`）⇒ 出站回灌 tun：
+
+```
+设节点 → 回灌 tun → 命中规则 → 又设节点 → ……
+```
+
+官方原文（`docs/configuration/inbound/tun.md`）：
+
+> To avoid traffic loopback, set `route.auto_detect_interface` or `route.default_interface` or `outbound.bind_interface`
+
+三个手段在 Android 图形客户端上只有第一个可行：`default_interface` 需要真实网卡名、
+`bind_interface` 同样；而且 `route/network.go` 的 `NetworkManager` 在图形客户端走的是
+`ProtectFunc()`（`experimental/libbox/service.go` 的 `UsePlatformNetworkInterfaces()` 恒 `true`），
+不是桌面那套网卡绑定。官方 `docs/manual/proxy/client.md` 三份客户端示例也都写了
+`"auto_detect_interface": true`。
+
+**为什么 `check` 抓不到**：`check` 只反序列化，不跑 `NetworkManager.Start()`，也不调 `NewDefault`。
+所以只能在 `audit.py` 里做静态门禁（`tun_without_auto_detect_interface`）：
+有 tun 入站且既没有 `route.auto_detect_interface` 也没有 `route.default_interface`
+也没有全部出站的 `bind_interface` 时，直接 ERROR。
+
+### ⛔ 铁律：不在本机乱试
+
+本机（Windows）挂着 OpenClash 网关，DNS 会被网关劫持——实测过：一份**完全不含 fakeip 配置**的
+最小配置查 `testingcf.jsdelivr.net`，`223.5.5.5` 仍返回 `198.18.0.70`（fakeip 网段）。
+
+所以：
+
+- **在本机跑出来的"能上网 / 不能上网"结论一律作废**，不能写进交付说明
+- `sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」**
+- 排查问题只允许三种手段：**读配置、读官方文档、读 sing-box 源码**
+- 真机结论只能由用户在真机上给出
 
 **修完必须回写**：把这次踩坑补进 `docs/PROTOCOL-MAPPING.md` 的"常见解码坑"表，
 或 `docs/version-matrix.json`。否则下次还会踩。
