@@ -1243,10 +1243,6 @@ git ls-files --others --exclude-standard  # 未跟踪、且未被 .gitignore 忽
 `公网 IP <某个未审阅公网 IP> 出现在 commit message`。
 两边跑的是**同一份代码、同一个提交**。
 
-> ⚠️ 本条教训连自己的例子都要脱敏：初稿把那个测试用 IP（一个真实公网地址）
-> 写进了正文，结果被 `audit_redaction()` 自己抓了出来 —— 写「不要泄漏 IP」的文档
-> 本身泄漏了 IP。描述这类事故时一律用占位符，不写具体地址。
-
 **根因**
 
 `LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"` —— **没有时区偏移**。
@@ -1294,21 +1290,23 @@ L29 我刚写下「交付前跑 audit 必须与 CI 同条件」——但那条�
 本机 `git log` 看着很干净、门禁 0 ERROR。
 但 `git ls-remote origin main` 给出的 SHA 与本地 HEAD **不是同一个**：
 
-| | SHA | message 含公网 IP |
-|---|---|---|
-| 本地 HEAD | `9c4a8ff` | 否（已 amend） |
-| 远端 `origin/main` | `0548c9b` | **是** |
+| | commit message |
+|---|---|
+| 本地 HEAD（amend 后的新提交） | 干净（占位描述） |
+| 远端 `origin/main`（amend 前的旧提交） | **仍含那个测试 IP** |
 
-两个提交的 **tree 完全相同**（`82b16b2be15c9205c9222758e8c8f2f7a076ed82`）、
-parent 相同（`a1f36aa`）、author date 相同，**只有 commit date 与 message 不同** ——
-典型的「amend 产生双胞胎」。
+两个提交的 **tree 完全相同**（同一个 `%T`）、parent 相同、author date 相同，
+**只有 commit date 与 message 不同** —— 典型的「amend 产生双胞胎」。
+
+> ⚠️ 按 L24，本条**不写这两个提交的 SHA**：SHA 是能在 GitHub 上直取旧对象的指针，
+> 写进仓库等于把要清理的东西又引用一遍。初稿确实写了，被自己复查揪出来（见「修法」）。
 
 **根因**
 
 `git commit --amend` 只改本地；**它不会推送**。我在同一轮里 amend 完就直接跑
 `git log` 自检，看到的是本地视图，于是以为「已经修好了」。
 而 `audit_redaction()` 是**在本地工作区里**跑 `git log` —— 它扫的是**本地历史**，
-自然也扫不到远端那个仍然带脏 message 的 `0548c9b`。
+自然也扫不到远端那个仍然带脏 message 的旧提交。
 ⇒ **门禁的视野 = 本地仓库，而泄漏的载体 = 远端仓库。两者不是一回事。**
 
 **为什么没被拦住**
@@ -1326,6 +1324,9 @@ parent 相同（`a1f36aa`）、author date 相同，**只有 commit date 与 mes
   不能停在 amend。（`--force-with-lease` 而非 `--force`：远端被别人推进时会拒绝。）
 - 一般化：**任何「修改历史」的操作（amend / rebase / reset）都以「推送完成」为终点**，
   否则本地与远端会出现两个语义相同、内容不同的提交，而所有本地自检都只看得见其中一个。
+- 连带自查：写完这条教训后我自己又犯了一次 L24 —— 初稿把两个提交的 SHA
+  原样抄进了正文。**写「不要写 SHA」的教训时，最容易顺手写上 SHA。**
+  描述事故一律用「日期 + 背景 + 相对身份（远程/本地、新/旧）」，不用 SHA。
 
 **门禁**：（本轮由人工核对发现，暂无自动门禁。若要加，方向是「推送后校验远端 HEAD 的
 commit message 与本地一致」，但需要网络与远端访问，不适合放进无网 CI。）
