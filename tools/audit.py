@@ -1502,7 +1502,10 @@ _IP_TOKEN = re.compile(
 # 窗口内任取一刻都对：早于窗口则把该拦的漏掉，晚于窗口则将来会误报无关的后续提交。
 # 故意不取“引入本门禁那次提交的精确时间”：那样每改一次代码都要重取常量，形成自指循环。
 # 此值只允许随真实时间前进，不得回调。
-LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"
+# ⚠️ **必须带显式时区偏移**（如 `+08:00`）。写成不带偏移的 `"YYYY-MM-DD HH:MM:SS"`，
+#    git 会按**各机器本地时区**解释 —— 本机 +0800、CI 是 UTC，同一份门禁会得到
+#    相差 8 小时的两个窗口（本地扫 6 个提交、CI 扫 0 个），结论自然不一致。实测踩过，见 L30。
+LEAK_SCAN_START_DATE = "2026-10-12T20:00:00+08:00"
 
 
 def audit_template_text(rep: Report):
@@ -1582,6 +1585,18 @@ def audit_tools(rep: Report):
             rep.error("tool_selftest_failed", "diff_config.compare 漏报新增/缺失字段")
     except Exception as ex:  # noqa: BLE001 — 自检本身失败也要报出来
         rep.error("tool_selftest_failed", f"无法对 diff_config 做自检：{ex!r}")
+
+    # LEAK_SCAN_START_DATE 必须带显式时区偏移（对应 L30 那次真实事故）
+    # 不带偏移时 git 按各机器本地时区解释：本机 +0800 扫到 6 个提交、CI(UTC) 扫到 0 个，
+    # 同一份门禁给出相反的结论。这类“环境相关”的常量必须把自己钉死。
+    if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$", LEAK_SCAN_START_DATE):
+        rep.error(
+            "tool_selftest_failed",
+            f"LEAK_SCAN_START_DATE 必须写成带显式时区偏移的 ISO 形式（如 2026-10-12T20:00:00+08:00），"
+            f"当前是 {LEAK_SCAN_START_DATE!r}。不带偏移会被各机器按本地时区解释，"
+            f"本地与 CI 得到相差数小时的窗口，详见 docs/LESSONS.md L30",
+        )
+
 
     # DIRECT_NON_EMPTY_KEYS 的语义守卫（对应 L1 那次真实事故）
     keys = DIRECT_NON_EMPTY_KEYS
