@@ -49,6 +49,7 @@
     "AD 的 outbounds 永远只有 block 和 direct（tools/audit.py 会检查）",
     "tag 名 Proxy / AI / AD / direct / block 是保留名，节点不得占用（Proxy 现在是 urltest 组，节点更不能占用）",
     "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense",
-    "route 里必须写 auto_detect_interface: true（tun + auto_route 场景下不写会导致出站 socket 不被 protect，流量回灌 tun，表现为节点全无延迟/只有上传没下载/内存暴涨）"
+    "route 里必须写 auto_detect_interface: true（tun + auto_route 场景下不写会导致出站 socket 不被 protect，流量回灌 tun，表现为节点全无延迟/只有上传没下载/内存暴涨）",
+    "IPv4-only 必须端到端：dns.strategy 只管本地 DNS，route.rules 末尾还要有 {\"action\": \"resolve\", \"strategy\": \"ipv4_only\"}，否则目标域名会被原样交给代理服务端解析、服务端可能用 IPv6 出口（详见 docs/LESSONS.md L17）"
   ]
 }

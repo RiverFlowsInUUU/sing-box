@@ -30,7 +30,7 @@
 ## 仓库结构
 
 ```
-AGENTS.md                     AI 入口与 12 条铁律
+AGENTS.md                     AI 入口与 14 条铁律
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
@@ -96,6 +96,8 @@ python tools/upgrade-check.py
 10. 旧版本配置只归档不删除
 11. **不在本机乱试**——本机有 OpenClash 网关会劫持 DNS，本机连通性结论一律作废；只读配置 / 官方文档 / 源码
 12. **tun + auto_route 必须写 `route.auto_detect_interface: true`**——不写就是“能启动但没网”
+13. 日志里的 `using outbound/selector[AD]: operation not permitted` 是**拦截成功的正常日志**，不要去“修” AD 组；AD 的 `default` 必须始终是 `block`
+14. **「只走 IPv4」必须端到端**——`dns.strategy` 只管本地 DNS；`route.rules` 末尾必须有 `{"action": "resolve", "strategy": "ipv4_only"}`，否则目标域名会被原样交给代理服务端解析
 
 每条铁律背后的事故、源码证据与对应门禁见 [`docs/LESSONS.md`](docs/LESSONS.md)。
 **开工前先扫一遍那份台账**，那些坑都是真机上踩过的。

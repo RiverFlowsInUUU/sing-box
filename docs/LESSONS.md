@@ -392,6 +392,64 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 
 ---
 
+## L17 「只走 IPv4」写了 dns.strategy 却没用 —— 域名被原样交给代理服务端
+
+**现象**（用户真机反馈，m02566 → m02616）
+
+> 「访问境外网站只走 IPv4，不走 IPv6」
+> 「不对哦，访问境外网站，我看他们还是说有 IPV6 的请求 我用 https://ip.net.coffee/测的」
+
+**结论：这多半不是配置漏了，而是「本地能控制的 IPv4 强制」有边界。**
+
+**根因（源码路径）**
+
+1. `dns.strategy: "ipv4_only"` 只管**本地 DNS 解析**（`dns/client.go:451-486` 的 `Lookup` 遇 `ipv4_only` 只查 `TypeA`；`dns/client.go:270` 对 AAAA 直接返回空 NOERROR）。
+   配置里 `dns.rules[0] = {"query_type":["AAAA","HTTPS","SVCB"],"action":"predefined","rcode":"NOERROR"}`
+   （`dns/router.go:750-755`）也只掐死「本地发起的 AAAA 查询」。
+2. 但代理出站默认拿到的是**域名**：`route/conn.go:103-104` 只有
+   `len(metadata.DestinationAddresses) > 0 || metadata.Destination.IsIP()` 时才走 `dialer.DialSerialNetwork(...)`，
+   否则走 `this.DialContext(ctx, N.NetworkTCP, metadata.Destination)` —— 域名原样发给服务端。
+3. 服务端（VPS）自己去解析这个域名，**它可能选 IPv6**。本地无从约束。
+   `ip.net.coffee` 首页的「分流出口 IP 汇总」用 `compactIp()` 压缩 IPv6 显示，
+   所以这里看到 IPv6 地址 = 该站点真的以 IPv6 出口出去了。
+4. `{"ip_version":6,"action":"reject"}` **挡不住这种情况**：`route/rule/rule_item_ipversion.go` 的
+   `IPVersionItem.Match` = `metadata.IPVersion != 0 && metadata.IPVersion == 6 == r.isIPv6 ||
+   metadata.Destination.IsIP() && metadata.Destination.IsIPv6() == r.isIPv6` —— 只认 IP 字面量或 DNS 侧写的 IPVersion，
+   域名连接在没 resolve 前一律不匹配。
+
+**修法：在 `route.rules` 里加 `{"action": "resolve", "strategy": "ipv4_only"}`**
+
+- `route/route.go:893-922` 的 `actionResolve()` 解析后写 `metadata.DestinationAddresses`；
+  `route/conn.go:103-104` 随即改走 `DialSerialNetwork`，
+  `common/dialer/default_parallel_network.go:16-45` 最终 `dialer.DialContext(ctx, network, M.SocksaddrFrom(address, destination.Port))`
+  → **拨号目标是 IPv4 字面量，代理收到的就是 IP，服务端没有选择余地。**
+- 放**最后一条规则**（`geoip-cn→direct` 之后）：`resolve` 是继续匹配的中间动作
+  （`route/route.go:670-705`，只有 `route`/`reject`/`hijack-dns`/`bypass` 才 `break match`），
+  放最后只对落到 `final: "Proxy"` 的境外流量多做一次查询，国内直连不额外解析。
+- 位置放最后也不破坏前面的规则：`rule_item_cidr.go`（geoip）、`rule_item_ip_is_private.go`、
+  `rule_item_ip_accept_any.go`、`rule_item_preferred_by.go` 都已支持 `metadata.DestinationAddresses`；
+  `rule_item_rule_set.go` 只匹配域名项，不会被「替换出来的 IP」误命中。
+- `strategy` 必须**显式写 `ipv4_only`**：不写就继承 `dns.strategy`，哪天有人把 `dns.strategy` 改成 `prefer_ipv4`
+  就会静默退化成「优先 IPv4 但允许 IPv6」。
+
+**为什么以前没被拦住**
+
+- `sing-box check` 完全通过；`audit.py --run` 也能存活 —— 这两个只证明「配置合法、能启动」，不证明「端到端 IPv4」。
+- 「IPv6 从哪来」有很长一段时间被误归因为「本地 tun 没配 IPv6 就不该有 IPv6 流量」。
+  实际上本地确实进不来 IPv6（SFA `VPNService.kt` 只在存在 IPv6 地址时才 `addRoute("::", 0)`），
+  **漏点在 VPS 侧出网**。
+- 也误信过 `ip.net.coffee` 会「报 IPv6 请求」——查遍该站五个页面（`/`、`/dns/`、`/webrtc/`、`/claude/`、`/claude/ipv6.html`）
+  **没有任何这种判定输出**；`/dns/` 页的「原因三：IPv6 DNS 绕过代理」只是静态科普段落。
+
+**门禁**：`resolve_not_ipv4_only`, `resolve_missing_ipv4_only`
+
+**涉及**：`tools/audit.py`（6 节）；`profiles/1.14/{android,desktop,ios}-lazy.json`、`local/android-usai.json` 的 `route.rules` 末尾
+
+**边界（必须如实告知用户）**：本手段能保证**代理连接的目标地址是 IPv4**。
+若服务端自己还要再解析一层（例如它按域名二次请求），那一段仍不受本地控制。
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

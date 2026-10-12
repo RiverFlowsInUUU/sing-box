@@ -692,6 +692,32 @@ def audit_repo_rules(cfg, rep: Report):
                     "sing-box 会报 'http_client is conflict with deprecated download_detour field'",
                 )
 
+    # 6) IPv4-only 必须端到端：只写 dns.strategy 掐不死代理侧（见 docs/LESSONS.md L17）
+    #    插件机制：route/route.go 的 actionResolve 只写 metadata.DestinationAddresses，
+    #    route/conn.go:103-104 一旦 DestinationAddresses 非空就走 DialSerialNetwork，
+    #    目标被换成 IP 字面量 → 代理只收到 IPv4。没有这一步时，域名会原样交给服务端解析，
+    #    服务端可能给出 IPv6（ip.net.coffee 首页汇总就会出现 IPv6 出口 IP）。
+    resolve_rules = [
+        (i, r)
+        for i, r in enumerate(route.get("rules", []))
+        if isinstance(r, dict) and r.get("action") == "resolve"
+    ]
+    for i, r in resolve_rules:
+        if r.get("strategy") != "ipv4_only":
+            rep.error(
+                "resolve_not_ipv4_only",
+                f"route.rules[{i}] 的 resolve.strategy = {r.get('strategy')!r}，本项目要求 "
+                '"ipv4_only"：resolve 会把解析结果写成出站拨号目标，用 prefer_ipv4 仍可能落到 IPv6；'
+                "不写 strategy 则继承 dns.strategy（改一处就会静默退化）",
+            )
+    if cfg.get("dns", {}).get("strategy") == "ipv4_only" and not resolve_rules:
+        rep.warn(
+            "resolve_missing_ipv4_only",
+            "dns.strategy = ipv4_only 但没有 route.rules 的 `{\"action\": \"resolve\", \"strategy\": "
+            "\"ipv4_only\"}`：本地 DNS 只掐了 AAAA，目标域名仍会被原样交给代理服务端解析，"
+            "服务端可能用 IPv6 出口（详见 docs/LESSONS.md L17）",
+        )
+
 
 GROUP_TYPES = ("selector", "urltest", "block", "dns")
 # 分流组（骨架 tag 固定），任何一个配置文件都不得出现同名 tag 的重复语义

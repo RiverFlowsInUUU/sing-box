@@ -62,6 +62,7 @@ EOF
 | 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」** |
 | 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
 | 13 | **日志里出现 `using outbound/selector[AD]: operation not permitted` 是正常的**，不是 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
+| 14 | **「只走 IPv4」必须端到端**。`dns.strategy: "ipv4_only"` 只管本地 DNS；目标域名默认是**原样交给代理服务端**的，服务端可能选 IPv6 出口。必须在 `route.rules` **末尾**加 `{"action": "resolve", "strategy": "ipv4_only"}`（`route/conn.go:103-104` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，目标变成 IPv4 字面量）。`strategy` 不要省。`audit.py` 有 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` 门禁兜底 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -206,7 +207,7 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 六项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义）+ 教训台账一致性 + sing-box check
+# 七项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端）+ 教训台账一致性 + sing-box check
 # audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
 # 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios

@@ -264,6 +264,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
 | **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
+| 用户说「访问境外网站还有 IPv6 请求」/ `https://ip.net.coffee/` 首页汇总里出现 IPv6 出口 IP | 只在本地 DNS 层面掐了 AAAA（`dns.strategy: ipv4_only` + `predefined NOERROR`），但**目标域名仍是原样交给代理服务端解析**，服务端可能选 IPv6 出口 | 在 `route.rules` **末尾**加 `{"action": "resolve", "strategy": "ipv4_only"}`（`route/conn.go` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，拨号目标变成 IPv4 字面量）。`strategy` 必须显式写。详见 `docs/LESSONS.md` L17；`audit.py` 报 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` |
 
 ### ⚠️ 最重要的一条：`check` 过了不代表启动得了
 
