@@ -41,7 +41,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
-| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录） |
+| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + commit message**（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
@@ -161,7 +161,7 @@ local/                        ← 【不提交】本机真实节点配置（.git
 | # | 动作 | 为什么需要同意 |
 |---|---|---|
 | 1 | `git commit` | 落盘即进入历史 |
-| 2 | `git push` | 一旦推到公开仓库就**收不回来**（`ec5d300` 泄漏节点信息就是靠 force-push 补的，且旧 commit 仍可按 SHA 取到） |
+| 2 | `git push` | 一旦推到公开仓库就**收不回来**（2026-10-12 那次泄漏节点信息的提交就是靠 force-push 补的，且旧 commit 仍可按 SHA 取到） |
 | 3 | 改 `singbox_version.txt` | 这是“唯一版本真相”，改了等于宣布全仓库已对齐新版 |
 | 4 | 改矩阵里的 `adopt` | 等于替用户决定“用不用这个新功能” |
 | 5 | **删除任何现有字段** | 删错了就是真机没网（L4 教训：当年删了 `auto_detect_interface`） |

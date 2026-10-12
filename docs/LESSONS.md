@@ -797,7 +797,56 @@ if rel.parts and rel.parts[0] == "profiles":          # ← 只管 profiles/ 目
 
 **门禁**：`sensitive_ip_in_repo`、`redaction_clean`
 
-**涉及**：`tools/audit.py`、`docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md`、`AGENTS.md`（铁律 7、11）
+---
+
+## L24 内容脱敏了，指向它的「指针」还在 —— SHA 也是泄漏物
+
+**现象**：节点地址脱敏（L23）之后，我在三处说明里写了事故那个 commit 的 **SHA 前缀**，
+用来指代“就是那一次”：`AGENTS.md` 的「需用户同意的六个动作」表里一句“靠 force-push 补的”、
+`docs/DECISIONS.md` 的 D9 触发栏、`docs/LESSONS.md` 的 L23 标题下。三处都已推到公开仓库。
+
+**根因（实测，非推断）**：force-push 只把**分支指针**挪走，GitHub 上的旧对象仍可按 SHA 直取：
+
+```bash
+$ gh api repos/<owner>/<repo>/commits/<旧 SHA> --jq '.commit.committer.date'   # HTTP 200，返回 2026-10-12T08:29:54Z
+$ curl -s https://github.com/<owner>/<repo>/commit/<旧 SHA>.patch | grep -c '<泄漏域名>'   # 3
+```
+
+同时还查了两件事：**全新 clone 里已经没有这个对象**（`git cat-file -e` 失败、`count-objects` 为 0），
+但这不等于它不可取 —— REST API 与网页 commit 页是**另一条路径**，两条都实测 HTTP 200。
+
+⇒ **脱敏文件内容只能挡住“直接搜内容”**；一旦有人在仓库里写下那个 SHA，
+就等于给搜索者留了一把钥匙：搜到 SHA → 直接 `curl` 到原文，前面的脱敏全部作废。
+**SHA 与它所指向的内容，泄漏等级相同。**
+
+**为什么没被拦住**：
+1. 建 `audit_redaction()` 时的口径是“扫**内容**”，压根没想到 commit message 与被跟踪的 **MD 文件**，
+   也属于“会被写进仓库的文本”，且同样推不回来。
+2. 心理上把 SHA 当成“一个编号”而不是“一条 URL” —— 但在这个场景下它就是 URL。
+
+**修法**：分两步 —— 第二步推翻了我自己的第一步。
+- 内容：三处 SHA 全部换成“日期 + 背景”（如「2026-10-12 的节点信息泄漏事故」）。
+  这正是**信息足够、指针不必要**的又一个例子 —— 与 L23 里“只需两者相等这个关系”同一条思路。
+- 门禁（第一步，错的）：给 `audit_redaction()` 加一份“已泄漏 SHA”的**黑名单常量**，
+  并把扫查范围从「被跟踪文件」扩大到全部 commit message。
+  写完立刻发现它自相矛盾：**要拦住某个 SHA，就必须把那个 SHA 明文写进仓库** ——
+  而 SHA 恰恰是能在 GitHub 上直取旧对象的指针。黑名单自己成了新的一把钥匙，
+  而且是**递归**的：拦住“写 SHA”这件事的清单，自己就得写 SHA。
+- 门禁（第二步，改对的）：改用**不点名任何 commit 的单调时间切点** ——
+  `LEAK_SCAN_START_DATE = "2026-10-12 20:30:00"`（`tools/audit.py`），
+  commit message 只扫这个时刻之后的（`git log --since=...`），被跟踪文件仍全量扫。
+  语义是「本门禁从此生效：之后的历史必须干净」，不需要知道之前漏过什么，因此无需任何名单。
+
+**同类教训**：
+1. 脱敏要分两层看 —— **内容层（真实地址）与指针层（指向内容的版本号/URL/SHA）**。
+   只洗内容不洗指针，等于把钥匙留在锁旁边。约定：**写事故一律用「日期 + 背景」，不写 SHA**。
+2. **给泄漏做黑名单是自败的**：黑名单要求你写出要拦的东西，而“要拦的东西”本身就是泄漏物。
+   凡遇到「禁止出现 X」类门禁，先问一句：**判定 X 是否必须存下 X？**
+   必须存 ⇒ 换成不依赖 X 判定的机制（时间切点、事后评审、只存哈希前缀且不可反查）。
+
+**门禁**：`redaction_clean`（扫查范围扩到 commit message；黑名单设计已废弃）
+
+**涉及**：`tools/audit.py`、`AGENTS.md`、`docs/DECISIONS.md`
 
 ---
 

@@ -1339,15 +1339,34 @@ _IP_TOKEN = re.compile(
     r"(?<![\w.:/])((?:\d{1,3}\.){3}\d{1,3}|(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})(?![\w.:/])"
 )
 
+# 防泄漏扫查的「起点」：不追溯这个时刻之前的 commit message。
+#
+# 为什么用「时间」而不是「一份已泄漏 SHA 的清单」：**清单本身就是钥匙**。
+# 要在仓库里拦住某个 SHA，就必须把那个 SHA 明文写进仓库；而 SHA 是能在 GitHub 上
+# 直取旧对象的**指针**（分支重置也删不掉），写清单等于把钥匙重新泄漏一次。
+# 这个递归无法用黑名单解决 —— 所以改用**单调递增、不需要点名任何 commit** 的常量：
+# 「本门禁从此生效，之前的历史已知含泄漏、之后必须干净」。
+#
+# 取值规则（避免循环依赖）：取一个**手选、整齐、落在窗口内**的时刻 ——
+#   窗口 = ( 已知最脏的 commit , 引入本门禁的 commit ]
+# 窗口内任取一刻都对：早于窗口则把该拦的漏掉，晚于窗口则将来会误报无关的后续提交。
+# 故意不取“引入本门禁那次提交的精确时间”：那样每改一次代码都要重取常量，形成自指循环。
+# 此值只允许随真实时间前进，不得回调。
+LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"
+
 
 def audit_redaction(rep: Report):
-    """防泄漏扫查：被跟踪文件里不许出现「未被审阅过」的公网 IP。
+    """防泄漏扫查：被跟踪文件与（近期）commit message 里不许出现「未被审阅过」的公网 IP。
 
     这个门禁的由来是一次真实事故：L18 的证据文档写了 “实测” 二字，
     却把节点域名与它的 A/AAAA 记录（也就是用户服务器的真实地址）一起写进了公开仓库。
     当时所有门禁都通过了 —— 因为它们是按“字段”审的，而 IP 是写在散文里的。
 
-    范围：`git ls-files` 的全部文件（含 docs/）。`local/` 不跟踪、按规定就允许放真实节点，故跳过。
+    范围：`git ls-files` 的全部文件（含 docs/）+ commit message。
+    commit message 也算“写进仓库的文本” —— 它同样公开、同样推不回来。
+    但 commit message 只扫 LEAK_SCAN_START_DATE 之后的：历史里已知有泄漏，
+    而“把要拦的 SHA 写进仓库”会重新泄漏一次（见该常量的说明）。
+    `local/` 不跟踪、按规定就允许放真实节点，故跳过。
     豁免：- RFC 私有 / 回环 / 文档专用 / 组播 等范围
           - PUBLIC_IP_WHITELIST 里人工审阅过的公网 IP
     """
@@ -1365,17 +1384,11 @@ def audit_redaction(rep: Report):
         return
 
     hits = {}
-    for f in files:
-        if f.startswith("local/"):
-            continue  # 铁律 7：local/ 不跟踪，允许放真实节点
-        p = ROOT / f
-        if not p.is_file():
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
+
+    def scan(text: str, label_of) -> None:
+        """扫一段文本，收集未审阅的公网 IP。label_of(lineno) 给出定位串。"""
         for lineno, line in enumerate(text.splitlines(), 1):
+            label = label_of(lineno)
             for m in _IP_TOKEN.finditer(line):
                 raw = m.group(1)
                 try:
@@ -1390,12 +1403,42 @@ def audit_redaction(rep: Report):
                         continue
                 elif any(addr in net for net in _IP_EXEMPT_NETS):
                     continue
-                hits.setdefault(str(addr), []).append(f"{f}:{lineno}")
+                hits.setdefault(str(addr), []).append(label)
+
+    for f in files:
+        if f.startswith("local/"):
+            continue  # 铁律 7：local/ 不跟踪，允许放真实节点
+        p = ROOT / f
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        scan(text, lambda lineno, f=f: f"{f}:{lineno}")
+
+    # commit message 同样是公开、推不回来的文本 —— 一并扫，但只扫门禁启用之后的。
+    # 不追溯更早的历史：见 LEAK_SCAN_START_DATE 的说明（写清单 = 重新泄漏）。
+    try:
+        log_text = subprocess.run(
+            ["git", "log", f"--since={LEAK_SCAN_START_DATE}",
+             "--format=%h|%s %b", "--no-color"], cwd=str(ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as ex:
+        rep.info("skip_check_template", f"无法取得 git 日志，跳过 commit message 防泄漏扫查：{ex}")
+        log_text = ""
+    for line in log_text.splitlines():
+        if not line.strip():
+            continue
+        sha7 = line.split("|", 1)[0]
+        scan(line, lambda lineno, s=sha7: f"commit {s}（commit message）")
 
     if not hits:
         rep.info(
             "redaction_clean",
-            f"防泄漏扫查通过：{len(files)} 个被跟踪文件中没有未审阅的公网 IP",
+            f"防泄漏扫查通过：{len(files)} 个被跟踪文件，以及 {LEAK_SCAN_START_DATE} 之后的 "
+            "commit message 中，没有未审阅的公网 IP",
         )
         return
     for ip, locs in sorted(hits.items(), key=lambda kv: -len(kv[1])):
