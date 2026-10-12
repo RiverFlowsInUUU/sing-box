@@ -852,6 +852,85 @@ def _free_port():
     return port
 
 
+# ---------------------------------------------------------------- 教训台账校验
+
+# 框架性/非配置类 code，不要求有 LESSONS 条目
+LESSON_FRAMEWORK_CODES = {
+    "json",
+    "no_singbox",
+    "run_skipped",
+    "singbox_check",
+    "singbox_run",
+    "singbox_run_tun",
+    "singbox_timeout",
+}
+LESSONS = ROOT / "docs" / "LESSONS.md"
+LESSONS_GATE_RE = re.compile(r"`([a-z][a-z0-9_]{2,})`")
+AUDIT_SRC = Path(__file__).resolve()
+
+
+def _audit_gate_codes():
+    """扫出 tools/audit.py 里所有真实的门禁 code。"""
+    src = AUDIT_SRC.read_text(encoding="utf-8")
+    return set(re.findall(r'rep\.(?:error|warn)\(\s*"([a-z0-9_]+)"', src))
+
+
+def _lessons_gate_codes():
+    """扫出 docs/LESSONS.md 每条教训声明的门禁 code。"""
+    if not LESSONS.exists():
+        return None
+    lines = LESSONS.read_text(encoding="utf-8").splitlines()
+    declared = set()
+    for line in lines:
+        if line.startswith("**门禁**："):
+            body = line.split("：", 1)[1]
+            # 「无」= 明确声明这条教训没有门禁对应
+            if body.strip().startswith("无"):
+                continue
+            for code in LESSONS_GATE_RE.findall(body):
+                declared.add(code)
+    return declared
+
+
+def audit_lessons(rep: Report):
+    """校验 docs/LESSONS.md 与 tools/audit.py 的门禁双向可追溯。
+
+    方向一：LESSONS 里声明的门禁 code 必须在 audit.py 源码里真实存在。
+    方向二：audit.py 里每个非框架 code 必须在某个 docs/*.md 里出现过。
+
+    为什么需要：文档写了门禁但代码没实现 = 假装有防护；代码加了门禁但没记录教训 = 下次被误删。
+    """
+    if not LESSONS.exists():
+        rep.error("lessons_missing", "docs/LESSONS.md 不存在：没有教训台账，历史踩过的坑会重犯")
+        return
+    real = _audit_gate_codes()
+    declared = _lessons_gate_codes() or set()
+    for code in sorted(declared - real):
+        rep.error(
+            "lessons_missing_gate",
+            f"docs/LESSONS.md 声明了门禁 `{code}`，但 tools/audit.py 里没有实现——假装有防护",
+        )
+    docs_text = ""
+    for p in sorted((ROOT / "docs").glob("*.md")):
+        try:
+            docs_text += p.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    for p in (ROOT / "AGENTS.md", ROOT / "README.md"):
+        if p.exists():
+            try:
+                docs_text += p.read_text(encoding="utf-8")
+            except Exception:
+                pass
+    for code in sorted(real - LESSON_FRAMEWORK_CODES):
+        if code not in docs_text:
+            rep.error(
+                "gate_without_lesson",
+                f"tools/audit.py 的门禁 `{code}` 在 docs/*.md、AGENTS.md、README.md 里都没有出处——"
+                f"请在 docs/LESSONS.md 补一条教训条目说明它拦的是什么事故",
+            )
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -917,6 +996,13 @@ def main():
 
     targets = []
     failed = False
+    lessons_rep = Report("docs/LESSONS.md")
+    audit_lessons(lessons_rep)
+    if lessons_rep.items:
+        for lv, code, msg in lessons_rep.items:
+            print(f"[{lv[0]}] docs/LESSONS.md: {msg}")
+    if not lessons_rep.ok():
+        failed = True
     if args.files:
         targets = [Path(f) for f in args.files]
     else:

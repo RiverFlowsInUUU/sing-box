@@ -8,6 +8,8 @@
 用户只给**节点分享链接**（`vmess://` `vless://` `trojan://` `hysteria2://` `ss://` `anytls://` …）
 和**想要的落点**（Proxy / AI / AD 三个分流组之一），你负责：
 
+0. **先读 `docs/LESSONS.md`（事故台账）** —— 里面逐条记录了历史上真机上出过的事故、
+   根因、以及对应的门禁 code。开工前扫一遍，别重犯。
 1. 查证**当前正式版**是什么版本、有哪些字段已废弃/已移除 → `singbox_version.txt` + `docs/VERSION-MATRIX.md`
 2. 用 `docs/PROTOCOL-MAPPING.md` 把分享链接翻译成 `outbounds[]` 里的一个节点对象
 3. 把该节点塞进用户指定的分流组的 `outbounds` 列表
@@ -15,6 +17,33 @@
 5. 输出**平台对应**的完整 JSON 给用户
 
 **不要凭记忆写字段。** 每个字段都必须能在 `docs/PROTOCOL-MAPPING.md` 或 schema 里查到。
+
+### 0.1 铁律 0：给用户改配置前，先做字段差异比对
+
+如果用户给了一份**已有的配置**，让你改（不管改多小），**必做**：
+
+```bash
+python - <<'EOF'
+import json
+a = json.load(open("用户原始配置.json", encoding="utf-8"))
+b = json.load(open("我改完的配置.json", encoding="utf-8"))
+def walk(o, p=""):
+    if isinstance(o, dict):
+        for k, v in o.items(): yield from walk(v, f"{p}.{k}" if p else k)
+    elif isinstance(o, list):
+        for i, v in enumerate(o): yield from walk(v, f"{p}[{i}]")
+    else: yield p, o
+A, B = dict(walk(a)), dict(walk(b))
+print("只在原始配置里（可能被我删了）:", sorted(set(A) - set(B)))
+print("只在生成配置里（可能是我加的）:", sorted(set(B) - set(A)))
+for k in sorted(set(A) & set(B)):
+    if A[k] != B[k]: print(f"改了: {k}: {A[k]!r} -> {B[k]!r}")
+EOF
+```
+
+**每一个差异都必须能说出为什么**。说不出原因的，就按原始配置保留。
+这条是拿真实事故换来的（见 `docs/LESSONS.md` 的 **L4**）：我当初凭印象重写模板，
+把用户原始配置里本来就有的 `auto_detect_interface: true` 删了，直接导致真机没网。
 
 ## 1. 硬性铁律
 
@@ -67,6 +96,7 @@ AGENTS.md                     ← 你在读的文件（AI 入口）
 README.md                     ← 人类入口
 singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
 docs/
+  LESSONS.md                  ← 【开工先读】事故台账：现象 / 根因 / 为什么没拦住 / 修法 / 对应门禁
   WORKFLOW.md                 ← 完整工作流（升级流程 / 生成流程 / 校验流程 / 排障）
   PROTOCOL-MAPPING.md         ← 【核心】分享链接 → outbound 字段映射表
   VERSION-MATRIX.md           ← 逐版本废弃/移除字段总表（由 version-matrix.json 生成，勿手改）
@@ -81,7 +111,7 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
 templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
-  audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + sing-box check
+  audit.py                    ← 门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 教训台账一致性 + sing-box check
   upgrade-check.py            ← 上游有新正式版/新废弃项时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md
 archive/<大版本>/             ← 旧版本配置归档（只归档不删除）
@@ -97,6 +127,7 @@ local/                        ← 【不提交】本机真实节点配置（.git
 2. 读 docs/PROTOCOL-MAPPING.md 对应协议小节      # 拿到字段清单
 3. 读 profiles/<ver>/{platform}-lazy.json        # 拿骨架
 4. 按映射表把链接解成 outbound，插到出站列表
+   —— ⚠️ 若用户给了一份已有配置让你改，**先做字段差异比对**（见 §0.1 铁律 0）
 5. 把 outbound tag 加进用户指定的分流组（Proxy / AI / AD）的 outbounds 数组
    —— `Proxy` 是 urltest 组，**把节点直接加进 `Proxy` 就是加进自动测速**（不再有单独的 `Auto` 组）
 6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
@@ -127,7 +158,8 @@ local/                        ← 【不提交】本机真实节点配置（.git
 3. FATAL legacy/removed → 用了已移除字段 → 查 VERSION-MATRIX 的迁移写法
 4. 静默但功能不对      → 查 PLATFORM-MATRIX 平台能力
 5. **能启动但没网**     → 先查 `route.auto_detect_interface`（见下方分岔点），再查 DNS detour
-6. 把这次踩坑写回对应文档
+6. **先在 `docs/LESSONS.md` 里查有没有同类事故**，有就按那条的修法办
+7. 修完把新的教训追加成 `## L<n>` 条目，并确保对应门禁 code 已实现（否则 `audit_lessons()` 会拦）
 ```
 
 **分岔点：错误是 check 阶段还是 run 阶段？**
@@ -172,8 +204,9 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 四项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性）+ sing-box check
+# 五项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌）+ 教训台账一致性 + sing-box check
 # audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
+# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn code 双向对得上
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 
@@ -195,6 +228,13 @@ python tools/gen-docs.py
 
 `audit.py` 退出码：`0` 全通过，`1` 有 ERROR（禁止交付）。
 WARN 可以交付，但必须在回复里向用户说明。
+
+**教训台账一致性**（`audit_lessons()`，每次跑都执行，不需要额外参数）：
+- 方向一：`docs/LESSONS.md` 里 `**门禁**：` 声明的每个 code 必须在 `tools/audit.py` 源码里真实存在，
+  否则报 ERROR `lessons_missing_gate`（防止“文档声称有防护、代码里根本没实现”）。
+- 方向二：`tools/audit.py` 里每个非框架 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 里出现过，
+  否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
+- 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
 
 `--version` 用来**预演**「假设客户端升级到这个版本会怎样」，例如
 `python tools/audit.py --version 1.15.0 profiles/1.14/ios-lazy.json` 会提前告诉你要删 `stack`。

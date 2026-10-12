@@ -34,6 +34,7 @@ AGENTS.md                     AI 入口与 12 条铁律
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
+  LESSONS.md                  【开工先读】事故台账：现象→根因→修法→对应门禁
   WORKFLOW.md                 完整工作流（怎么用 + 怎么维护）
   PROTOCOL-MAPPING.md         【核心】分享链接 → outbound 字段映射
   PLATFORM-MATRIX.md          Android / iOS / Windows 能力差异
@@ -91,6 +92,13 @@ python tools/upgrade-check.py
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
 7. **任何时候仓库都不放真实节点**——含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
+9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`
+10. 旧版本配置只归档不删除
+11. **不在本机乱试**——本机有 OpenClash 网关会劫持 DNS，本机连通性结论一律作废；只读配置 / 官方文档 / 源码
+12. **tun + auto_route 必须写 `route.auto_detect_interface: true`**——不写就是“能启动但没网”
+
+每条铁律背后的事故、源码证据与对应门禁见 [`docs/LESSONS.md`](docs/LESSONS.md)。
+**开工前先扫一遍那份台账**，那些坑都是真机上踩过的。
 
 ## 常见坑
 
@@ -107,6 +115,8 @@ python tools/upgrade-check.py
 | 把用户给的真实节点直接写进 `profiles/` 并提交 | 真实节点写 `local/<platform>.json`（不提交）；`audit.py` 的 `placeholder_server` 检查会报 ERROR 拦住 |
 | 广告拦截用了 `MetaCubeX` 的 `category-ads-all` | 改用 Jinx 的 `jinx-ads` + 秋风 `awanue-ads`，并配套 `jinx-direct` 放行集 |
 | 规则集顺序随意摆 | 顺序错了等于没加：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| tun 配置里没有 `route.auto_detect_interface` | **能启动、不报错，但真机完全没网**（节点全无延迟、只有上传没下载、内存爆 1GB）。这是 Android 唯一可行的防回环手段，`check` 对此完全静默 |
+| 拿本机跑出来的连通性当证据 | 本机有 OpenClash 网关会劫持 DNS（无 fakeip 的最小配置也会被返回 `198.18.0.x`），本机结果一律作废。只读配置 / 官方文档 / 源码 |
 
 ## 版本
 
