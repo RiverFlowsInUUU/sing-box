@@ -23,6 +23,8 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 | 规则集**顺序**（放行/拦截/分流先后错了等于没加） | `tools/audit.py` 的 Jinx 顺序检查 |
 | **tun 出口回灌**（能启动但没网，`check` 全静默） | `tools/audit.py` 的 `tun_without_auto_detect_interface` 门禁 |
 | **新增能力没决策**（多了什么而不是少了什么） | `tools/upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind="new"` + `docs/DECISIONS.md` |
+| **真实节点地址泄到公开仓库**（`docs/` 的散文也会公开） | `tools/audit.py` 的 `sensitive_ip_in_repo`（扫被跟踪文件 + commit message） |
+| **门禁自己坏了 / 静默跳过**（工具语法错也能全绿） | `tools/audit.py` 的 `tool_syntax_error` + `tool_selftest_failed` |
 | 上游又改了 | `tools/upgrade-check.py` |
 
 ## 一、目录职责

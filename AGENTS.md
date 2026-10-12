@@ -221,10 +221,15 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查 + sing-box check
-# audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
+# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
+# audit.py 自己找 sing-box（ROOT/bin/ 或 PATH）；也认环境变量 SINGBOX_BIN
+#   ⚠️ 本机没有 bin/ 也没装进 PATH 时，--run 会**静默降级**为 INFO 跳过（看起来照样 PASS）。
+#   要真跑就把本机路径放进环境变量（仓库里不许写本机绝对路径，铁律 7）：
+#   export SINGBOX_BIN="C:/path/to/sing-box.exe"
 # 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上，
 # 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
+# 并逐个 compile tools/*.py + 对 diff_config.compare / DIRECT_NON_EMPTY_KEYS 做不变量自检
+#   （门禁自己不被人查，L25：静默失效比报错危险）
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 
@@ -253,6 +258,16 @@ WARN 可以交付，但必须在回复里向用户说明。
 - 方向二：`tools/audit.py` 里每个非框架 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 里出现过，
   否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
 - 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
+
+**防泄漏扫查**（`audit_redaction()`，每次跑都执行）：
+- 范围 = `git ls-files` 的全部被跟踪文件 + **commit message**（后者只扫 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后）。
+- 命中即 ERROR `sensitive_ip_in_repo`；全净则 INFO `redaction_clean`。
+- 追溯起点用**时间**而不是「已泄漏 SHA 黑名单」：黑名单要拦住某个 SHA 就必须把该 SHA 明文写进仓库，等于二次泄漏，且递归无解（L24）。
+
+**工具自检**（`audit_tools()`，每次跑都执行）：
+- 逐个 `compile()` `tools/*.py` → ERROR `tool_syntax_error`（语法错自己也是错）。
+- `tools/diff_config.py` 的 `compare()` 三组不变量测试 + `DIRECT_NON_EMPTY_KEYS` 语义断言 → ERROR `tool_selftest_failed`。
+- 动机：门禁只审配置、不审自己，**静默失效比报错危险**（L25）。
 
 > 注意：`ads_block_log_noise` 故意做成 **INFO** 而不是 WARN —— 它描述的是“正常现象”，若做成 WARN 则每次自检都不干净，反而让人麻木。
 

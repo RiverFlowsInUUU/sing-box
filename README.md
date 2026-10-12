@@ -47,7 +47,7 @@ profiles/1.14/                可运行配置（占位节点）
 templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
-  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 广告拦截语义 + IPv4-only 端到端 + 新功能采纳
+  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 广告拦截语义 + IPv4-only 端到端 + 新功能采纳 + 防泄漏扫查 + 工具自检
   upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
 archive/                      旧大版本配置归档
@@ -65,13 +65,19 @@ sing-box 迭代快，字段会改名、合并、废弃、移除。而现有工�
 | **平台能力差异** | ❌ **完全不校验**（iOS 写 `strict_route` 也 exit=0） | `PLATFORM-MATRIX.md` + `audit.py` |
 | **引用完整性** | ❌ 出站/规则集/DNS server 写错也不报 | `audit.py` |
 | **新增能力没决策** | ❌ **完全不知道多了什么**（1.15 的 MASQUE / Tailcat / sing-tun 栈） | `upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind=new` + `DECISIONS.md` |
-| **真实节点地址泄到公开仓库** | ❌ **完全不校验**（写在 `docs/` 散文里也一样） | `audit.py` 的 `sensitive_ip_in_repo`（扫全部被跟踪文件） |
+| **真实节点地址泄到公开仓库** | ❌ **完全不校验**（写在 `docs/` 散文里也一样） | `audit.py` 的 `sensitive_ip_in_repo`（扫全部被跟踪文件 + commit message） |
+| **门禁自己坏了 / 静默跳过** | ❌ **完全看不出来**（门禁不审自己，工具语法错也能全绿） | `audit.py` 的 `tool_syntax_error` + `tool_selftest_failed` |
 
 ## 门禁命令
 
 ```bash
-# 体检所有 profile（会自己找 sing-box；也可用 --singbox 指定路径）
+# 体检所有 profile（会自己找 sing-box：ROOT/bin/ 或 PATH，也认 SINGBOX_BIN）
 python tools/audit.py
+
+# ⚠️ 本机没装 sing-box 时，--run 会静默降级为 INFO 跳过（看起来照样 PASS）。
+#    要真跑就把路径放环境变量（仓库里不许写本机绝对路径）：
+#    export SINGBOX_BIN="C:/path/to/sing-box.exe"
+python tools/audit.py --run --run-seconds 20
 
 # 单个文件 + 指定平台
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
@@ -84,6 +90,10 @@ python tools/upgrade-check.py
 ```
 
 `audit.py` 退出码：`0` 全通过；`1` 有 ERROR，禁止交付。
+
+除配置门禁外，每次跑还会连带做四道“无参数也会跑”的自检：
+教训台账双向校验（`docs/LESSONS.md` ↔ 代码里的门禁 code）、决策记录双向校验（`docs/DECISIONS.md` ↔ 矩阵 `kind=new`）、
+防泄漏扫查（被跟踪文件 + commit message）、**工具自检**（`tools/*.py` 能否编译 + 关键工具不变量）。
 
 ## 铁律（摘要，详见 `AGENTS.md`）
 

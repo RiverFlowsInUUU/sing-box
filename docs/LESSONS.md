@@ -357,7 +357,7 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
   然后 `m.logger.ErrorContext(ctx, err)` —— **拦截走的就是这条“拨号失败”路径**。
 - 所以拦一次广告 = 一行 `INFO outbound/block[block]: blocked connection to ...`
   + 一行 `ERROR connection: open connection to ... using outbound/selector[AD]: operation not permitted`。
-- 本机实测（`C:/Users/Administrator/_probe/ademo/ad.json`，mixed 入站 + AD selector(default block)）：
+- 本机实测（`local/` 里自建的 mixed 入站 + AD selector(default block) 最小配置）：
   日志输出与用户手机完全一致，`curl` 返回 SSL 错误（rc=35），即连接被切断。
 
 **为什么容易误判**
@@ -847,6 +847,49 @@ $ curl -s https://github.com/<owner>/<repo>/commit/<旧 SHA>.patch | grep -c '<�
 **门禁**：`redaction_clean`（扫查范围扩到 commit message；黑名单设计已废弃）
 
 **涉及**：`tools/audit.py`、`AGENTS.md`、`docs/DECISIONS.md`
+
+---
+
+## L25 门禁只审配置，不审自己 —— 工具本身没人检查
+
+**现象**：一天之内出现三次“工具自己坏了、但所有检查都 PASS”：
+1. `tools/audit.py` 的 `audit_new_features()` 里写成 `return    uncovered = []`（两行粘成一行）
+   ⇒ `SyntaxError: invalid syntax`，**整个门禁跑不起来**，是在本机手跑时才发现的。
+2. `tools/gen-docs.py` 的 `pinned` 在赋值前被引用 ⇒ `UnboundLocalError: cannot access local variable 'pinned'`。
+3. 别人为去硬编码把 `tools/audit.py` 的 `find_singbox()` 本机兜底路径删了（只留 `ROOT/bin/` 与 `PATH`）；
+   本机没有 `bin/`、`PATH` 里也没有 sing-box ⇒ `--run` **静默降级**为 `[i] 未指定 sing-box 可执行文件，已跳过 sing-box check`，
+   整体照样 PASS。而「真启动一次、只筛 FATAL」恰恰是我们唯一能拦住
+   “写出一个语法合法但跑不起来的配置” 的那层（`sing-box check` 只反序列化，见 L1）。
+
+**根因**：所有门禁都是“拿**配置文件**当输入”写的。**工具自己不是检查对象**。
+于是存在一个死角：门禁坏了 → 门禁输出看起来正常 → 没人发现它已经没在工作。
+这比“门禁报错”危险得多，因为它是**静默**的。
+
+**为什么没被拦住**：
+- `audit.py` 的定位一直是“审配置”，压根没把自己列进目标（`targets` 里只有 `profiles/**.json` 与 `templates/groups.json`）。
+- 第 3 条尤其隐蔽：它**不是报错**，是**跳过**，而跳过用的是 `rep.info`/`rep.warn` —— 一个 INFO 文本夹在一屏输出里，没人会去抓它。
+- 反过来看 CI：CI 里 `SINGBOX_BIN=/usr/local/bin/sing-box` 是设好的，所以 **CI 真的跑了 run 验证**，
+  本机与 CI 行为不一致，进一步掩盖了本机的问题。
+
+**修法**：新增 `audit_tools()`（`tools/audit.py`），在 `main()` 里与其它台账同级挂上：
+- 逐个 `compile()` `tools/*.py` 
+  → 新 code **`tool_syntax_error`**（类型 1、2 这类错误从此跑不掉：注意 `compile()` 只查语法，
+  而语法错恰恰是实际发生过的形态；`UnboundLocalError` 属运行期，靠第 2 类不变量测试兕）。
+- 对关键工具做**不变量测试**（不是“跑一遍”，是断言它算出的结果对）：
+  `tools/diff_config.py` 的 `compare()` 被抽成可 import 的函数，
+  用「两份相同 / 只改一个值 / 一边多一个字段」三个输入验它分别给出 0 差异 / `changed=["a"]` / `only_a`+`only_b`
+  → 新 code **`tool_selftest_failed`**。
+  另外断言 `DIRECT_NON_EMPTY_KEYS` 不含 `domain_strategy`（L1 就错在这里）且含 `domain_resolver`。
+- 把“工具静态可发现”的检查留在 `find_singbox` 层级，**不把本机绝对路径写回仓库**
+  （铁律 7：仓库不放本机信息），改为**在本机用 `SINGBOX_BIN` 环境变量**提供路径；
+  `--run` 降级情况已由 `no_singbox` / `run_skipped` 两个既有 code 覆盖。
+
+**同类教训**：一条检查链的强度 = **最弱一环**，而“检查器自身”永远是没人看的那一环。
+凡新增门禁，先问：**如果它坏了，谁会知道？** 答“没人知道” ⇒ 就得给它配一条自检。
+
+**门禁**：`tool_syntax_error`, `tool_selftest_failed`
+
+**涉及**：`tools/audit.py`、`tools/diff_config.py`、`tools/gen-docs.py`
 
 ---
 

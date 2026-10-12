@@ -1355,6 +1355,62 @@ _IP_TOKEN = re.compile(
 LEAK_SCAN_START_DATE = "2026-10-12 20:00:00"
 
 
+def audit_tools(rep: Report):
+    """工具自检：让「工具」也被自己的门禁检查一道。
+
+    两次真实事故推动了这条：① 我在同一次会话里两次把 SyntaxError 写进工具
+    （`audit.py` 的 `return    uncovered = []`、`gen-docs.py` 的 `UnboundLocalError`），
+    都是靠手跑才发现 —— 而门禁自己在 CI 里跑，谁也检查不了它；
+    ② `6a72411` 为了去硬编码把 `find_singbox()` 的本机兜底路径删了，
+    本机 `--run` 从此静默降级为 WARN，看起来照样 PASS，
+    但「真启动一次只筛 FATAL」那一层实际上没跑（CI 有 `SINGBOX_BIN`，所以 CI 仍真跑）。
+
+    检查两类：① `tools/*.py` 能不能编译（语法错自己也是错）；
+    ② 关键工具的不变量 —— `diff_config.compare()` 行为、`DIRECT_NON_EMPTY_KEYS` 语义。
+    """
+    tools_dir = ROOT / "tools"
+    for p in sorted(tools_dir.glob("*.py")):
+        try:
+            compile(p.read_text(encoding="utf-8"), str(p), "exec")
+        except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as ex:
+            rep.error("tool_syntax_error", f"{p.name} 无法编译：{ex}")
+
+    # diff_config.compare 的不变量：门禁 import 它做自检，不能只“相信它没问题”
+    try:
+        sys.path.insert(0, str(tools_dir))
+        import importlib
+        dc = importlib.import_module("diff_config")
+        same = dc.compare({"a": 1, "nest": {"b": [2]}}, {"a": 1, "nest": {"b": [2]}})
+        if same["only_a"] or same["only_b"] or same["changed"]:
+            rep.error("tool_selftest_failed", "diff_config.compare 把两份相同配置报成了差异")
+        chg = dc.compare({"a": 1}, {"a": 2})
+        if chg["changed"] != ["a"]:
+            rep.error("tool_selftest_failed", f"diff_config.compare 漏报值变更：{chg['changed']}")
+        add = dc.compare({"a": 1}, {"b": 1})
+        if add["only_a"] != ["a"] or add["only_b"] != ["b"]:
+            rep.error("tool_selftest_failed", "diff_config.compare 漏报新增/缺失字段")
+    except Exception as ex:  # noqa: BLE001 — 自检本身失败也要报出来
+        rep.error("tool_selftest_failed", f"无法对 diff_config 做自检：{ex!r}")
+
+    # DIRECT_NON_EMPTY_KEYS 的语义守卫（对应 L1 那次真实事故）
+    keys = DIRECT_NON_EMPTY_KEYS
+    if len(set(keys)) != len(keys):
+        rep.error("tool_selftest_failed", "DIRECT_NON_EMPTY_KEYS 里有重复项")
+    # domain_strategy 被 schema:\"omit\"，填在 direct 上也仍然算「空 direct」（L1 就错在这）。
+    if "domain_strategy" in keys:
+        rep.error(
+            "tool_selftest_failed",
+            "DIRECT_NON_EMPTY_KEYS 不应包含 domain_strategy：它已被 schema 标 omit，"
+            "填了也仍算空 direct（会 FATAL），详见 docs/LESSONS.md L1",
+        )
+    if "domain_resolver" not in keys:
+        rep.error(
+            "tool_selftest_failed",
+            "DIRECT_NON_EMPTY_KEYS 缺了 domain_resolver：这是让 direct 非空、"
+            "能当规则集下载 detour 的关键字段，详见 docs/LESSONS.md L1",
+        )
+
+
 def audit_redaction(rep: Report):
     """防泄漏扫查：被跟踪文件与（近期）commit message 里不许出现「未被审阅过」的公网 IP。
 
@@ -1549,6 +1605,16 @@ def main():
     if not redact_rep.ok():
         failed = True
 
+    # 工具自检（同上，与具体配置无关）：工具也是代码，语法错与不变量失效同样要拦。
+    # 只管 ERROR 不管 WARN：本机没有 sing-box 时 --run 会降级为 WARN，那是预期行为。
+    tools_rep = Report("tools/*.py 自检")
+    audit_tools(tools_rep)
+    if tools_rep.items and not args.json:
+        for lv, code, msg in tools_rep.items:
+            print(f"[{lv[0]}] {msg}")
+    if not tools_rep.ok():
+        failed = True
+
     if args.files:
         # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
@@ -1604,6 +1670,7 @@ def main():
         (newfeat_rep, {"new-features"}),
         (decisions_rep, {"decisions"}),
         (redact_rep, {"redaction"}),
+        (tools_rep, {"tools"}),
     ]
     if args.json:
         all_results = ledger_results + results

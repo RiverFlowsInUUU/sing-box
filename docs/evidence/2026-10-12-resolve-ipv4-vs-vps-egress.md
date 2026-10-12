@@ -1,8 +1,8 @@
 # 实证：resolve/ipv4_only 在本机 100% 生效，出口仍出现 IPv6 ⇒ 责任在服务端
 
 - **日期**：2026-10-12
-- **环境**：sing-box `1.14.3`（Windows amd64），本机测试配置 `_probe/t/dbg.json`
-  （由 `local/android-usai.json` 派生：tun 入站换 mixed `127.0.0.1:12095`，`log.level = debug`）
+- **环境**：sing-box `1.14.3`（Windows amd64），本机测试配置（由 `local/android-usai.json` 派生，不入库：
+  tun 入站换 mixed `127.0.0.1:12095`，`log.level = debug`）
 - **节点**：用户真实 hysteria2 节点（`local/` 内，不入库）
 - **目的**：判定用户 m03448/m03531 报的「配置了 `resolve`+`ipv4_only` 仍看到 IPv6 出口」到底出在哪一段
 
