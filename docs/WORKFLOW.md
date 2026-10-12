@@ -22,6 +22,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 | 引用完整性（出站/规则集/DNS server 不存在） | `tools/audit.py`（`check` 不校验！） |
 | 规则集**顺序**（放行/拦截/分流先后错了等于没加） | `tools/audit.py` 的 Jinx 顺序检查 |
 | **tun 出口回灌**（能启动但没网，`check` 全静默） | `tools/audit.py` 的 `tun_without_auto_detect_interface` 门禁 |
+| **新增能力没决策**（多了什么而不是少了什么） | `tools/upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind="new"` + `docs/DECISIONS.md` |
 | 上游又改了 | `tools/upgrade-check.py` |
 
 ## 一、目录职责
@@ -45,11 +46,14 @@ tools/upgrade-check.py     升级巡检
 tools/gen-docs.py          由 JSON 生成人读版矩阵
 archive/                   旧大版本配置归档
 docs/LESSONS.md            事故台账（每条教训 → 对应门禁 code，双向可追溯）
+docs/DECISIONS.md          决策记录（每条新功能的启用/不启用、备选方案、前提风险）
 ```
 
 ## 一bis、开工前必做：读事故台账
 
 **每次生成或修改配置之前，先扫一遍 [`docs/LESSONS.md`](LESSONS.md)。**
+同时看 [`docs/DECISIONS.md`](DECISIONS.md) —— 那里记着「为什么这些新功能被否决」，
+避免把已经否定过的方案又提一遍。
 台账里逐条记了历史上真机上出过的事故（包括用户报的完整报错原文）、源码级根因、
 以及对应的门禁 code。那些坑都是真金白银踩出来的，不要重踩。
 
@@ -187,6 +191,8 @@ python tools/upgrade-check.py
 
 ### B3. 处理废弃项
 
+> 📖 先看 B3bis —— **新功能**（多了什么）与废弃项（少了什么）是两件事，都要处理。
+
 对报告里每一条：
 
 1. 找到官方原文（`docs/upstream-deprecated.md` 对应段 + 链接的 migration 锚点）
@@ -248,6 +254,67 @@ echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
 python tools/upgrade-check.py --write    # 更新上游文档快照
 ```
 
+> ⚠️ 上面最后两行属于「需用户同意的六个动作」（`singbox_version.txt` / `--write`），
+> **先给人看 diff、得到同意再做**。
+
+### B3bis. 处理新增能力（`kind="new"`）—— 与废弃项同等重要
+
+废弃项的处理是「**少了什么，怎么补**」；新能力是「**多了什么，用不用**」。
+后者**没有默认答案**，不写就等于隐式选了“不启用” —— 而真实原因往往是“根本没注意到它存在”。
+
+1. 看 `python tools/upgrade-check.py` 报告的第 5 节【新功能清点】：
+   它把 `docs/upstream-changelog.md` 里 **≥ 锁定版本** 的所有正式版新功能列出来，
+   并标出哪些还没在矩阵里被收录（`new_feature_uncovered` 就是这条比对失败）。
+2. 把清单整理成**三栏**给用户看，逐条等拍板（**不得自行决定**，铁律 16）：
+
+| 栏位 | 含义 | 矩阵写法 |
+|---|---|---|
+| **必须跟随** | 新写法取代旧写法、没有开关（例：1.15 把 `tun.stack` 换成 sing-tun 自带栈） | `kind="deprecated"` + `removed_in`（不是 `new`） |
+| **必须决策** | 新能力，启用/不启用由用户拍板（例：MASQUE / Tailcat / `auto_redirect`） | `kind="new"`，`adopt` 必填 |
+| **可放着** | 与场景无关或纯内部更新 —— 也要记一笔 | `kind="new"`，`adopt: "no"` + `reason` 写清“为何无关” |
+
+3. 拍板后**写两个地方**（少一个都会被门禁拦）：
+
+```jsonc
+// docs/version-matrix.json 的 entries[] —— 机器依据
+{
+  "id": "new_masque_endpoints",
+  "kind": "new",
+  "since": "1.15.0",
+  "title": "MASQUE 端点（CONNECT-IP）",
+  "adopt": "no",                              // yes | no | required
+  "reason": "现有 hy2/vless 节点已满足需求；NASQUE 需服务端支持",
+  "decide_by": "1.16.0",                      // 可选：到这个版本前必须重新看一次
+  "keywords": ["MASQUE", "CONNECT-IP"],     // 用于与 changelog 条目比对
+  "expect": {                                 // 可选：可机器检测的采纳标志
+    "path": "endpoints[type=masque]",
+    "state": "absent"                         // adopted=present / not_adopted=absent
+  }
+}
+```
+
+```markdown
+<!-- docs/DECISIONS.md —— 人的理由，模板见该文件开头 -->
+## D6 MASQUE 端点：不启用
+- **日期**：2026-10-12
+- **触发**：1.15.0 上游新增
+- **决策**：不启用
+- **矩阵 ID**：`new_masque_endpoints`
+- **为什么**：……
+- **备选方案**：……（以及为何没选）
+- **前提/风险**：……（什么条件下该重新评估）
+```
+
+4. 门禁自检：`python tools/audit.py`。相关 code：
+   `new_feature_uncovered`（changelog 有新功能但矩阵没收录）、
+   `new_feature_without_adoption`（`kind=new` 缺 `adopt` / `reason`）、
+   `new_feature_expect_invalid`（`adopt` 与 `expect.state` 矛盾）、
+   `new_feature_decision_overdue`（已过 `decide_by` 仍未拍板）、
+   `decision_without_record` / `decision_references_unknown`（矩阵与 `DECISIONS.md` 双向不一致）。
+
+> 为什么“必须跟随”类不算 `new`：它没有“用不用”的余地 —— 旧字段一删就得跟着走，
+> 归入 `deprecated` 那套（含 `removed_in` 升级风险）才正确。
+
 ## 四、流程 C：用户反馈"跑不起来"
 
 按报错形态分流：
@@ -264,7 +331,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
 | **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
-| 用户说「访问境外网站还有 IPv6 请求」/ `https://ip.net.coffee/` 首页汇总里出现 IPv6 出口 IP | 只在本地 DNS 层面掐了 AAAA（`dns.strategy: ipv4_only` + `predefined NOERROR`），但**目标域名仍是原样交给代理服务端解析**，服务端可能选 IPv6 出口 | 在 `route.rules` **末尾**加 `{"action": "resolve", "strategy": "ipv4_only"}`（`route/conn.go` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，拨号目标变成 IPv4 字面量）。`strategy` 必须显式写。详见 `docs/LESSONS.md` L17；`audit.py` 报 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` |
+| 用户说「访问境外网站还有 IPv6 请求」/ `https://ip.net.coffee/` 首页汇总里出现 IPv6 出口 IP | ⚠️ **先分清是哪一层**：① 本地往服务端递的仍是域名（`resolve` 没生效或位置不对）；② 本地递的已是 IPv4 字面量，但**服务端**自己选了 IPv6 出口 | ① 看 `route.rules` 里 `resolve` 是否紧跟 `hijack-dns`、排在第一个 route/reject 之前 —— **放末尾等于没放**（第一条 route 一命中就 `break match`）。`audit.py` 报 `resolve_not_first` / `resolve_not_ipv4_only` / `resolve_missing_ipv4_only`。② **本地配置已无能为力**，先确认那个 IPv6 是不是节点自身的 AAAA 记录；要改去服务端禁用 IPv6 出网（铁律 15）。判定方法见 `docs/LESSONS.md` L17/L18 与 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
 
 ### ⚠️ 最重要的一条：`check` 过了不代表启动得了
 

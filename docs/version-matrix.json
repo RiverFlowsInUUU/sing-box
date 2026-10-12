@@ -1,12 +1,17 @@
 {
   "_comment": "机器可读的字段生命周期矩阵。audit.py 读取本文件做门禁。改本文件前请核对 docs/upstream-deprecated.md 原文。",
   "_schema": {
-    "kind": "deprecated | removed | platform | semantic",
+    "kind": "deprecated | removed | platform | semantic | new",
     "deprecated_in": "废弃起始正式版（不含 -alpha/-beta）",
     "removed_in": "移除版本；正式版 >= 该版本时使用即为致命错误",
     "path": "字段路径，[] 表示数组通配，[k=v] 表示数组内字段过滤",
     "replacement": "替代写法",
-    "doc": "官方文档锚点"
+    "doc": "官方文档锚点",
+    "adopt": "【仅 kind=new】本仓库对该新功能的采纳决策，必填：yes=启用 / no=明确不启用 / must=必须跟随（通常是旧写法被取代）",
+    "expect": "【仅 kind=new】采纳后该字段应有的状态：present=配置里必须有 / absent=配置里必须没有。adopt=no 时一律要求 absent（不启用就是不写这个字段）",
+    "since": "【仅 kind=new】该功能首次出现在哪个版本（不含 -alpha/-beta）",
+    "decide_by": "【仅 kind=new】最迟在哪个版本之前必须做完采纳决策；过了这个版本仍未决策即 ERROR",
+    "keywords": "【仅 kind=new】用于与 upstream-changelog.md 里的新功能条目做覆盖比对的关键词（小写子串）"
   },
   "entries": [
     {
@@ -321,6 +326,175 @@
       "replacement": "给下载用的 direct 出站加 domain_resolver（或 bind_interface / inet4_bind_address / routing_mark 等），或改走 Proxy；只写 {\"type\":\"direct\",\"tag\":\"direct\"} 的空 direct 不能作为规则集下载 detour",
       "doc": "https://github.com/SagerNet/sing-box/blob/dev/common/dialer/detour.go",
       "note": "check 完全静默，只有 run 启动规则集时才会 FATAL: detour to an empty direct outbound makes no sense。protocol/direct/outbound.go 用 reflect.DeepEqual(DialerOptions, {UDPFragmentDefault:true}) 判定 isEmpty"
+    },
+    {
+      "id": "new_tun_sing_tun_stack",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "sing-tun 自带 TCP/IP 栈（取代 tun.stack）",
+      "path": "inbounds[type=tun].stack",
+      "expect": "absent",
+      "adopt": "must",
+      "decide_by": "1.17.0",
+      "reason": "这不是「要不要开」而是「旧写法要删」：1.15 起 sing-tun 使用自己的 TCP/IP 栈，官方称峰值性能/能耗/内存均显著改善；删掉 stack 字段即启用。1.15/1.16 上删不删都能跑，1.17.0 起保留 stack 会 FATAL。★ 唯一风险点：本仓库 tun 写的是 mtu=9000，官方对比表用 1500/4064/65535，换栈后 mtu 取值需在正式版文档确认后再定。",
+      "keywords": [
+        "tcp/ip stack",
+        "sing-tun"
+      ],
+      "doc": "https://sing-box.sagernet.org/migration/#migrate-tun-stack"
+    },
+    {
+      "id": "new_dns_server_address_rule_item",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "route/dns 规则项 dns_server_address 与 dns_search_domain",
+      "path": "**.dns_server_address",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "可匹配系统/DHCP/VPN 下发的 DNS 服务器地址与搜索域；本仓库 DNS 已按域名分流，用不上。选择不启用。",
+      "keywords": [
+        "dns_server_address",
+        "dns_search_domain"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/route/rule/#dns_server_address"
+    },
+    {
+      "id": "new_tls_certificate_sha256_pinning",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "TLS 整证书 SHA-256 固定（certificate_sha256 / client_certificate_sha256）",
+      "path": "**.tls.certificate_sha256",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "在既有公钥固定之外新增整证书哈希固定。本仓库节点由用户随时更换、证书会轮换，钉死证书哈希会导致换证书后连不上，收益为负。选择不启用。",
+      "keywords": [
+        "certificate_sha256",
+        "certificate pinning"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/shared/tls/#certificate_sha256"
+    },
+    {
+      "id": "new_cache_file_write_buffering",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "cache_file 写缓冲（buffer_size / flush_interval）",
+      "path": "experimental.cache_file.buffer_size",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "纯 I/O 优化，默认 1MB 已由内核内部生效；即便不写字段，写缓冲这层也是开着的。额外调参无收益。选择不写字段。",
+      "keywords": [
+        "cache file write buffering",
+        "buffer_size"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/experimental/cache-file/#buffer_size"
+    },
+    {
+      "id": "new_tun_auto_redirect_android",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "Android auto_redirect 全功能支持",
+      "path": "inbounds[type=tun].auto_redirect",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "1.15 起 Android 上通过图形客户端的 root 服务或 root shell 全功能支持。本仓库三平台走 VpnService/系统 TUN，未使用 auto_redirect（也不需要 root）。无 root 真机验证条件，按默认策略选择不启用。",
+      "keywords": [
+        "auto_redirect"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/inbound/tun/#auto_redirect",
+      "note": "该字段本身自 1.10 起存在；1.15 是 Android 上的『全功能支持』。检测字段是 auto_redirect。"
+    },
+    {
+      "id": "new_endpoint_on_demand",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "endpoint 的 on_demand 选项（WireGuard / Tailscale / OpenVPN / OpenConnect）",
+      "path": "**.on_demand",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "本仓库不使用任何 endpoint（无 WireGuard/Tailscale/OpenVPN/OpenConnect），该选项无从落地。选择不启用。",
+      "keywords": [
+        "on_demand"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/endpoint/wireguard/#on_demand"
+    },
+    {
+      "id": "new_http_outbound_version",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "HTTP 出入站支持 HTTP/2、HTTP/3 与 UDP（version / disable_version_fallback）",
+      "path": "outbounds[type=http].version",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "1.15 重写 HTTP 代理：默认改用 HTTP/2 并自动回退 HTTP/1.1。默认行为已生效、无需配置；显式写 version 反而可能锁死协商结果。选择不写字段。",
+      "keywords": [
+        "http/2",
+        "http/3",
+        "http proxy",
+        "connect-udp"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/outbound/http/#version"
+    },
+    {
+      "id": "new_masque_endpoints",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "MASQUE 客户端/服务端 endpoint（HTTP CONNECT-IP）",
+      "path": "endpoints[type=masque-client]",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "新增协议，本仓库节点均为 vless/vmess/trojan/hysteria2/ss/anytls/tuic，无 MASQUE 服务端可用。选择不启用。",
+      "keywords": [
+        "masque"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/endpoint/masque-client/"
+    },
+    {
+      "id": "new_tailcat_inbound_outbound",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "Tailcat 出入站（Tailscale 数据面）",
+      "path": "inbounds[type=tailcat]",
+      "expect": "absent",
+      "adopt": "no",
+      "reason": "新增协议，需要 Tailscale 网络与其控制面配套。本仓库面向单机上网代理场景，用不上。选择不启用。",
+      "keywords": [
+        "tailcat"
+      ],
+      "doc": "https://sing-box.sagernet.org/configuration/inbound/tailcat/"
+    },
+    {
+      "id": "new_naiveproxy_version_bump",
+      "kind": "new",
+      "since": "1.15.0",
+      "title": "NaiveProxy 组件版本更新",
+      "path": null,
+      "expect": null,
+      "adopt": "no",
+      "reason": "仅上游组件版本号更新，无配置面变化。无需动作。",
+      "keywords": [
+        "naiveproxy"
+      ],
+      "doc": "https://sing-box.sagernet.org/changelog/",
+      "note": "无配置字段可检测（path=null），只作为 changelog 覆盖比对的目标。"
     }
-  ]
+  ],
+  "policy": {
+    "_comment": "新功能采纳策略。这一块是明文规则，不是隐性默认。",
+    "default_when_absent": "不启用",
+    "rule": [
+      "上游新功能默认关闭：不写对应字段即不启用，升级本身不会改变现有行为。",
+      "本仓库默认也选择「不启用」，除非满足以下任一条：",
+      "  1) 该功能是旧写法的替代（adopt=must）——此时不是「要不要开」，而是「旧字段要删」；",
+      "  2) 用户明确点头要启用。",
+      "决策必须落盘：矩阵里每条 kind=new 都必须有 adopt 与 reason，不允许「待定/回头再说」。"
+    ],
+    "approval_required": [
+      "git commit",
+      "git push",
+      "改 singbox_version.txt（锁定版本）",
+      "改 version-matrix.json 里任何 kind=new 条目的 adopt / reason / decide_by",
+      "删除任何现有字段",
+      "tools/upgrade-check.py --write（会覆盖上游文档快照）"
+    ]
+  }
 }

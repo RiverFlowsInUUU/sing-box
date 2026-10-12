@@ -30,11 +30,12 @@
 ## 仓库结构
 
 ```
-AGENTS.md                     AI 入口与 14 条铁律
+AGENTS.md                     AI 入口与 17 条铁律
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
   LESSONS.md                  【开工先读】事故台账：现象→根因→修法→对应门禁
+  DECISIONS.md                【开工先读】决策记录：新功能为何启用/不启用、备选方案、前提风险
   WORKFLOW.md                 完整工作流（怎么用 + 怎么维护）
   PROTOCOL-MAPPING.md         【核心】分享链接 → outbound 字段映射
   PLATFORM-MATRIX.md          Android / iOS / Windows 能力差异
@@ -46,7 +47,7 @@ profiles/1.14/                可运行配置（占位节点）
 templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
-  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + sing-box check
+  audit.py                    门禁：结构 + 废弃字段 + 平台能力 + 引用完整性 + 防回灌 + 广告拦截语义 + IPv4-only 端到端 + 新功能采纳
   upgrade-check.py            上游有新正式版 / 新废弃项时的巡检报告
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md
 archive/                      旧大版本配置归档
@@ -61,8 +62,8 @@ sing-box 迭代快，字段会改名、合并、废弃、移除。而现有工�
 | 未知字段 | ✅ 会 `FATAL` | `sing-box check` |
 | 已移除字段 | ✅ 会 `FATAL` | `sing-box check` + 矩阵表 |
 | **已废弃未移除** | ❌ **完全静默**（典型：`download_detour`） | `version-matrix.json` + `audit.py` |
-| **平台能力差异** | ❌ **完全不校验**（iOS 写 `strict_route` 也 exit=0） | `PLATFORM-MATRIX.md` + `audit.py` |
-| **引用完整性** | ❌ 出站/规则集/DNS server 写错也不报 | `audit.py` |
+| **平台能力差异** | ❌ **完全不校验**（iOS 写 `strict_route` 也 exit=0） | `PLATFORM-MATRIX.md` + `audit.py` || **引用完整性** | ❌ 出站/规则集/DNS server 写错也不报 | `audit.py` |
+| **新增能力没决策** | ❌ **完全不知道多了什么**（1.15 的 MASQUE / Tailcat / sing-tun 栈） | `upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind=new` + `DECISIONS.md` |
 
 ## 门禁命令
 
@@ -76,7 +77,7 @@ python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 # 预演"升到 1.15 会炸什么"
 python tools/audit.py --version 1.15.0 profiles/1.14/ios-lazy.json
 
-# 上游巡检：有没有新正式版 / 新废弃项
+# 上游巡检：新正式版 / 新废弃项 / 新功能清点（第 5 节）
 python tools/upgrade-check.py
 ```
 
@@ -97,7 +98,10 @@ python tools/upgrade-check.py
 11. **不在本机乱试**——本机有 OpenClash 网关会劫持 DNS，本机连通性结论一律作废；只读配置 / 官方文档 / 源码
 12. **tun + auto_route 必须写 `route.auto_detect_interface: true`**——不写就是“能启动但没网”
 13. 日志里的 `using outbound/selector[AD]: operation not permitted` 是**拦截成功的正常日志**，不要去“修” AD 组；AD 的 `default` 必须始终是 `block`
-14. **「只走 IPv4」必须端到端**——`dns.strategy` 只管本地 DNS；`route.rules` 末尾必须有 `{"action": "resolve", "strategy": "ipv4_only"}`，否则目标域名会被原样交给代理服务端解析
+14. **「只走 IPv4」必须端到端**——`dns.strategy` 只管本地 DNS；`route.rules` 里必须有 `{"action": "resolve", "strategy": "ipv4_only"}`，**且位置必须在 `hijack-dns` 之后、第一个 route/reject/bypass 之前**（放末尾等于没放，因为一命中就 break match），否则目标域名会被原样交给代理服务端解析
+15. **出口 IP 的地址族不由客户端决定**——`resolve` 只管到「本地→服务端」这一段；「服务端→目标站」由服务端决定。看到 IPv6 出口先去确认它是不是节点自身的 AAAA 记录，别在本地配置里继续加固
+16. **上游新增能力必须显式写下「启用 / 不启用 / 必须跟随」**——不写就是隐式选了“不启用”（往往因为没注意到）。矩阵建 `kind="new"` 条目 + `docs/DECISIONS.md` 记理由与备选方案
+17. **改配置、改流程都先拉仓库、先看 diff**——不直接覆盖已有文件（有把已更正的文档改回错误结论的先例）；`git commit` / `git push` / 改 `singbox_version.txt` / 改 `adopt` / 删除任何现有字段 / `upgrade-check.py --write` 这六个动作**必须事先取得用户同意**
 
 每条铁律背后的事故、源码证据与对应门禁见 [`docs/LESSONS.md`](docs/LESSONS.md)。
 **开工前先扫一遍那份台账**，那些坑都是真机上踩过的。
@@ -117,6 +121,8 @@ python tools/upgrade-check.py
 | 把用户给的真实节点直接写进 `profiles/` 并提交 | 真实节点写 `local/<platform>.json`（不提交）；`audit.py` 的 `placeholder_server` 检查会报 ERROR 拦住 |
 | 广告拦截用了 `MetaCubeX` 的 `category-ads-all` | 改用 Jinx 的 `jinx-ads` + 秋风 `awanue-ads`，并配套 `jinx-direct` 放行集 |
 | 规则集顺序随意摆 | 顺序错了等于没加：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| 用 `resolve` 强制 IPv4，却把它放在 `route.rules` 末尾 | 末尾等于没放：第一条 route/reject 一命中就 break match，resolve 根本没跑。必须紧跟 `hijack-dns` |
+| 上游发了新版，只看“什么被废弃了” | 新能力同样要清点：`upgrade-check.py` 第 5 节会列出 changelog 里的新功能，逐条写进矩阵 `kind="new"` + `DECISIONS.md` |
 | 看到日志里 `using outbound/selector[AD]: operation not permitted` 以为是坏了 | 这是 `block` 出站拦广告的**正常**输出（`syscall.EPERM`），说明广告确实被拦了。不用改配置；嫌刷屏就把 `log.level` 设成 `"panic"`。详见 `docs/LESSONS.md` L16 |
 | tun 配置里没有 `route.auto_detect_interface` | **能启动、不报错，但真机完全没网**（节点全无延迟、只有上传没下载、内存爆 1GB）。这是 Android 唯一可行的防回环手段，`check` 对此完全静默 |
 | 拿本机跑出来的连通性当证据 | 本机有 OpenClash 网关会劫持 DNS（无 fakeip 的最小配置也会被返回 `198.18.0.x`），本机结果一律作废。只读配置 / 官方文档 / 源码 |

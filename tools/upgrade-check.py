@@ -9,13 +9,16 @@ upgrade-check.py — 上游正式版升级巡检
     python tools/upgrade-check.py --report out.md # 把报告写到文件
     python tools/upgrade-check.py --no-net        # 离线：只做本地一致性自检
 
-它做四件事：
+它做五件事：
   1. 查 GitHub 上「最新正式版」（忽略 alpha/beta/rc），与本仓库 singbox_version.txt 比对。
   2. 若有新版，抓取该 tag 下的 docs/deprecated.md、docs/migration.md、docs/changelog.md，
      与本地 docs/upstream-*.md 做 diff，并把「新增版本段」切出来。
   3. 把上游 deprecated.md 里出现的版本段与 docs/version-matrix.json 的条目对账，
      列出「上游已宣布废弃但矩阵里没有」的漏网项。
   4. 用矩阵的 removed_in 计算「下一次升级会炸掉哪些字段」，列出受影响的本仓库配置。
+  5. **新功能清点**：列出矩阵里所有 kind=new 的采纳决策（启用/不启用/必须跟随），
+     并把上游 changelog 里「还没有对应决策条目」的新功能揪出来 —— 升级前必须先回答
+     「这个功能启不启用」，不允许靠「没注意到」默认不启用。
 
 退出码：0 = 无新正式版；1 = 有新正式版（需要人工处理）；2 = 脚本自身错误。
 """
@@ -358,8 +361,54 @@ def main():
         emit("本仓库现有配置未踩到任何已废弃字段。")
     emit()
 
-    # ---------------- 5. 结论与下一步
-    emit("## 5. 结论")
+    # ---------------- 5. 新功能清点
+    emit("## 5. 新功能清点（升级时要做的采纳决策）")
+    emit()
+    news = [e for e in matrix["entries"] if e.get("kind") == "new"]
+    if not news:
+        emit('- 矩阵里没有 `kind="new"` 条目 —— 新功能采纳机制等于不存在。')
+        problems.append("矩阵缺少 kind=new 新功能采纳条目")
+    else:
+        adopt_label = {"yes": "启用", "no": "不启用", "must": "必须跟随"}
+        emit(f"矩阵里共 **{len(news)}** 条新功能采纳决策：")
+        emit()
+        emit("| 决策 | 条目 | 自版本 | 决策截止 | 理由 |")
+        emit("|---|---|---|---|---|")
+        for e in sorted(news, key=lambda x: (x.get("adopt") or "", x.get("id", ""))):
+            emit(
+                "| {a} | `{i}` | {s} | {d} | {r} |".format(
+                    a=adopt_label.get(e.get("adopt"), e.get("adopt") or "**缺失**"),
+                    i=e.get("id", "?"),
+                    s=e.get("since") or "—",
+                    d=e.get("decide_by") or "—",
+                    r=(e.get("title") or "").replace("|", "/"),
+                )
+            )
+        emit()
+
+        # changelog 覆盖比对：上游有新功能，矩阵却没有决策 → 升级前必须补
+        if sbaudit is not None and hasattr(sbaudit, "_changelog_features"):
+            feats = sbaudit._changelog_features(target)
+            kws = [(e.get("keywords") or []) for e in news]
+            missing = []
+            for ver, feat in feats:
+                low = feat.lower()
+                if not any(k and k.lower() in low for kws_ in kws for k in kws_):
+                    missing.append((ver, feat))
+            emit(f"上游 changelog 里 >= {target} 的新功能条目：{len(feats)} 条（已去重）")
+            if missing:
+                emit()
+                emit("**以下上游新功能在矩阵里没有对应决策，升级前必须先回答「启不启用」：**")
+                emit()
+                for ver, feat in missing:
+                    emit(f"- `{ver}` {feat}")
+                problems.append(f"{len(missing)} 条上游新功能未做采纳决策")
+            else:
+                emit(f"- 全部 {len(feats)} 条已被 kind=new 条目的 keywords 覆盖。")
+        emit()
+
+    # ---------------- 6. 结论与下一步
+    emit("## 6. 结论")
     emit()
     if not problems:
         emit("- 无需动作。")
@@ -370,10 +419,13 @@ def main():
         emit("### 下一步（人工）")
         emit()
         emit("1. 逐条阅读上游 deprecated/migration 中本仓库锁版本之后的新增段。")
-        emit("2. 把新条目按既有格式补进 `docs/version-matrix.json`（kind / deprecated_in / removed_in / path / replacement / doc）。")
-        emit("3. 更新 `profiles/<大版本>/` 下的配置，删掉已废弃字段。")
+        emit("2. 把新条目按既有格式补进 `docs/version-matrix.json`：")
+        emit("   - 废弃类：kind / deprecated_in / removed_in / path / replacement / doc")
+        emit("   - 新功能类：kind=\"new\" / since / adopt(yes|no|must) / reason / decide_by / keywords")
+        emit("3. 更新 `profiles/<大版本>/` 下的配置，删掉已废弃字段；采纳的功能补上字段。")
         emit("4. `python tools/audit.py` 必须 0 ERROR 0 WARN。")
-        emit("5. 确认无误后 `--write` 更新本地文档副本与 `singbox_version.txt`。")
+        emit("5. 采纳决策与理由同步记录到 `docs/DECISIONS.md`。")
+        emit("6. 确认无误后 `--write` 更新本地文档副本与 `singbox_version.txt`。")
 
     text = "\n".join(lines) + "\n"
     if args.report:

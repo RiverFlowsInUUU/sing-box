@@ -556,6 +556,205 @@ outbound connection to 160.79.104.10:443      ← hy2 出站拿到的是 IPv4 �
 
 ---
 
+## L19 上游加了新功能，仓库里没有「启用 / 不启用」这个答案
+
+**现象**
+
+这不是一次真机事故，是流程里的一个空洞（由用户 m03708 提出“升级清单”时被指出来）：
+
+1. 1.15 上线了 10 个新能力（sing-tun 自带栈、MASQUE、Tailcat、HTTPS 证书固定…），
+   仓库里 `docs/version-matrix.json` 只有 `deprecated` / `removed` / `platform` / `semantic`
+   四类 kind —— **新功能这类根本没有对应字段**。
+2. 于是“要不要启用”这件事**没有任何地方会问、也没有任何地方会答**。
+   实际后果是**默认全部不启用**，但这个“默认”是**隐式**的：没写进任何文档、没有理由、
+   机器也不拦。下一个接手的人（或下一个 AI）只能靠猜。
+3. 危险的不是“不启用”，而是**不启用的理由是“没注意到”**。例如 sing-tun 自带栈删除
+   `stack` 字段：1.15/1.16 上删不删都能跑，拖到 **1.17.0 仍保留 `stack` 就是 FATAL** ——
+   如果没人把“必须在 1.17 前删掉”写下来，这就是一颗定时炸弹。
+
+**根因**
+
+- `docs/version-matrix.json` 的 `_schema.kind` 白名单只有四类，**没有“新功能”一类**；
+- `tools/audit.py` 的 `audit_matrix()` 只对四种 kind 分派（`deprecated`/`removed` 归一路、
+  `platform` 一路、`semantic` 一路），**没有任何分支处理“新功能未被决策”**；
+- `tools/upgrade-check.py` 的 4 节报告全部围绕**废弃字段**（版本比对 / 文档 diff / 矩阵对账 /
+  移除风险评估），**从不解析 changelog 的新功能条目**。
+
+即：整套工具链只回答“**旧写法什么时候死**”，不回答“**新能力要不要用**”。
+
+**为什么没被拦住**
+
+`sing-box check` 对“少写一个可选字段”天然静默（不写就是默认关），所以“漏决策”在
+语法层、启动层都不会留下任何痕迹。这是**纯流程漏洞**，只能靠台账 + 门禁兜。
+
+**修法（三条）**
+
+1. 矩阵里新增 `kind: "new"`，每条必须写全：
+
+```json
+{
+  "id": "new_xxx",
+  "kind": "new",
+  "since": "1.15.0",
+  "title": "中文说明",
+  "path": "字段路径（可检测时才有）",
+  "expect": "present | absent",
+  "adopt": "yes | no | must",
+  "reason": "为什么这么决策",
+  "decide_by": "必须做完决策的版本（可选）",
+  "keywords": ["用于与 changelog 做覆盖比对的小写子串"]
+}
+```
+
+   `adopt` 三个值的含义：`yes`=启用、`no`=明确不启用、`must`=必须跟随（旧写法被取代，
+   通常配套一条 `removed` 条目）。
+2. 门禁 `audit_new_features()`：
+   - `adopt` 缺失/非法、`reason` 为空 → ERROR；
+   - 有 `path` 但 `expect` 缺失/非法 → ERROR；`adopt=no` 却写 `expect=present` → ERROR（自相矛盾）；
+   - `decide_by` 已到而仍未决策 → ERROR（**不能靠“忘了”默认不启用**）。
+3. 配置层门禁（`audit_matrix` 的 `kind == "new"` 分支）反向验证：
+   `expect=absent` 而配置里**出现了**该字段 → ERROR；`expect=present` 而配置里**没有** → ERROR。
+
+**门禁**：`new_feature_without_adoption`, `new_feature_expect_invalid`, `new_feature_decision_overdue`
+
+**涉及**：`docs/version-matrix.json`（新增 10 条 `kind=new`）、`tools/audit.py`
+（`ADOPT_VALUES` / `NEW_WITH_PATH_EXPECT` / `audit_new_features()` / `main()` 单独调用一次）、
+`docs/DECISIONS.md`（人读的决策记录）、`docs/VERSION-MATRIX.md` 第二节
+
+---
+
+## L20 上游新增的功能条目进了 changelog，但没人看
+
+**现象**
+
+`tools/upgrade-check.py` 的巡检报告只有四节（版本比对 / 文档 diff / 矩阵对账 / 升级风险），
+**全部围绕“存量字段的命运”**。上游 changelog 里明明写着“Add MASQUE client and server support”
+这类新能力，报告里一个字都不提。
+
+后果：升级时只会处理“要删什么”，永远不会被提醒“上游多了什么、要不要用”——
+即“漏决策”这件事**连发现渠道都没有**。
+
+**根因**
+
+- `upgrade-check.py` 的 `TRACKED_DOCS` 确实包含 `docs/changelog.md`（会下载、会 diff），
+  但**全文没有任何解析函数** —— diff 完之后 changelog 的内容就被丢掉了。
+- 更细节的一个坑：changelog 里的脚注定义体（`**1**:` 这种行）以 `*` 开头，
+  会被“收集 `*` 开头的行”的逻辑当成功能条目。第一版解析器因此把 `1**:`、`2**:`、`3**:`
+  当成了 3 个新功能，报出“3 条未覆盖”的假错。根因是 `lstrip("*")` 先把前导 `*` 去掉了，
+  噪音正则要匹配的 `\*\*\d+\*\*\s*:` 再也匹配不上 —— 必须补一条 `\d+\*\*\s*:` 兜住变形后的形态。
+
+**为什么没被拦住**
+
+报告本身“看起来是完整的”（有 4 个章节、有结论、退出码也有），人不会怀疑它漏了一整类信息。
+**报告缺一类内容，比报告报错更难发现。**
+
+**修法**
+
+1. `tools/audit.py` 新增 `_changelog_features(floor_version)`：从 `docs/upstream-changelog.md`
+   抽「版本 ≥ 锁定版本」的功能条目。
+   **故意包含 alpha/beta/rc 段**（版本号归一化：`1.15.0-alpha.7` → `1.15.0`）——
+   这是提前看到未来新功能的唯一途径；正式版发布时条目会再出现一次，按归一化文本去重。
+2. 用每条 `kind=new` 的 `keywords` 做覆盖比对：上游有、矩阵没有 → ERROR `new_feature_uncovered`；
+   全覆盖 → INFO `new_feature_covered`（**故意是 INFO 不是 WARN** —— 它是“体检通过”的凭证，
+   做成 WARN 会让每次自检都不干净，反而让人麻木）。
+3. 把同一套逻辑搬进 `upgrade-check.py` 变成报告**第 5 节「新功能清点」**：
+   列出所有 `adopt` 决策表 + 还没做决策的上游功能，并计入 `problems`（报告退出码 1）。
+
+**门禁**：`new_feature_uncovered`, `new_feature_covered`
+
+**涉及**：`tools/audit.py`（`_changelog_features()` / `_CHANGELOG_NOISE`）、
+`tools/upgrade-check.py`（第 5 节）、`docs/upstream-changelog.md`
+
+---
+
+## L21 决策只有结论、没有理由，半年后没人敢动
+
+**现象**
+
+矩阵里为 10 条新功能写上了 `adopt: "no"` 与一行 `reason`。但那一行 `reason` 塞不下背景、
+备选方案、代价权衡。半年后有人看到 `new_masque_endpoints → no`，唯一能问的就是：
+
+- 当初是真的评估过不要，还是根本没注意到？
+- 现在想用了，要改动哪些地方？
+- 当时是拿什么前提做的决定（那个前提现在成立吗）？
+
+一行字回答不了任何一个问题，结果就是**没人敢改，或者盲目改了**。
+
+**根因**
+
+矩阵是**机读**的（门禁要解析它），所以字段必须短；一行 `reason` 是“给机器看的摘要”，
+天生不适合承载“给人看的论证”（见 `docs/LESSONS.md` L19 的机制讨论）。
+**如果只用矩阵，就等于只有结论、没有推理论证。**
+
+**为什么没被拦住**
+
+这属于“文档写得不够全”，**任何工具都不会报错**。而且矩阵看起来是完整的（每条都有 reason），
+人不会怀疑它缺东西 —— 与 L20 同一种病：*报告/台账缺一类内容，比它报错更难发现。*
+
+**修法**
+
+新增 `docs/DECISIONS.md`（人读的决策记录，格式 `## D<n> <标题>` + 日期 / 触发 / 决策 /
+矩阵 ID / 为什么 / 备选方案 / 前提风险），并加双向门禁 `audit_decisions()`：
+
+- **方向一**（`decision_without_record`）：矩阵里每条 `kind=new` 必须在 DECISIONS.md 的某个
+  D 小节里被引用，否则 ERROR —— 防止“机器有答案、人没理由”；
+- **方向二**（`decision_references_unknown`）：DECISIONS.md 的 D 小节里引用的
+  `` `new_xxx` `` 必须真实存在于矩阵，否则 ERROR —— 防止“矩阵改过、文档变谎言”；
+- 文件不存在直接 ERROR（`decisions_missing`）；两边一致时报 INFO `decisions_ok`。
+
+⚠️ 实现坑（已踩）：方向二最初扫的是**整个文件**，于是文首「记录格式」模板里的示例 id
+`` `new_xxx` `` 被当成真实引用，一上线就报假错。**必须只扫 `## D<n>` 小节的正文。**
+
+**门禁**：`decisions_missing`, `decision_without_record`, `decision_references_unknown`, `decisions_ok`
+
+**涉及**：`docs/DECISIONS.md`（新建）、`tools/audit.py`（`audit_decisions()` / `DECISION_HEAD_RE`）
+
+---
+
+## L22 改了流程文档，忘记把新流程写进入口文件 —— 规则存不存在取决于读到哪一份
+
+**现象**
+
+升级流程从“只管废弃字段”扩到“新功能也必须做采纳决策”后，涉及 6 个文件：
+`docs/DECISIONS.md`（新）、`docs/version-matrix.json`、`tools/audit.py`、
+`tools/upgrade-check.py`、`docs/WORKFLOW.md`、`AGENTS.md`、`README.md`。
+
+漏写其中任何一个的后果**不是报错，而是“因人而异”**：
+
+- AI 只读 `AGENTS.md` 就开工（这是仓库自己规定的入口）⇒ 它会做新功能决策吗？没人知道。
+- 人类只读 `README.md` ⇒ 他会看到“铁律 14 条”，其中**一个字都没提新功能**。
+- 两个人都**不会**有任何“好像少了什么”的感觉 —— 文档里少一节，读起来依然通顺。
+
+**根因**
+
+`docs/WORKFLOW.md` 是详版的流程，`AGENTS.md` 是 AI 入口，`README.md` 是给人看的摘要 ——
+三份内容**部分重叠但由人手维护**。新增流程时很容易只改其中一份（尤其是只改最“详细”的那份）。
+
+**为什么没被拦住**
+
+没有任何工具会检查“文档之间的内容一致”。`audit.py` 只校验配置与台账，不校验**文档内部自洽**。
+
+**修法**
+
+升级流程（流程 B）在四个地方必须同步到一致：
+
+| 文件 | 必须含 |
+|---|---|
+| `AGENTS.md` | 任务 B 的步骤里出现 `upgrade-check.py` 第 5 节 / `DECISIONS.md`；铁律表里有一条“新功能必须显式决策” |
+| `README.md` | 铁律摘要里有一条“新功能必须显式决策”；「体检命令」里出现新门禁 |
+| `docs/WORKFLOW.md` | 流程 B 里插入「新功能清点 → 逐条讨论 → 写进 DECISIONS.md」步骤 |
+| `docs/DECISIONS.md` | 每条新功能有对应 D 条目（由 L21 的门禁强制） |
+
+另：由 `audit_lessons()` 的双向校验兜住“**新门禁没人知道**”这一半
+（每个新 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 出现过）；
+但“**流程步骤漏写**”这一半**只能靠人**，因此本条目存在的意义就是提醒下一个改流程的人去对四个地方。
+
+**门禁**：无（文档内部一致性无法机器校验）
+
+**涉及**：`AGENTS.md`、`README.md`、`docs/WORKFLOW.md`、`docs/DECISIONS.md`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

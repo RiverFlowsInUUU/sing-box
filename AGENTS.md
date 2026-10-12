@@ -64,6 +64,8 @@ EOF
 | 13 | **日志里出现 `using outbound/selector[AD]: operation not permitted` 是正常的**，不是 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
 | 14 | **「只走 IPv4」必须端到端**。`dns.strategy: "ipv4_only"` 只管本地 DNS；目标域名默认是**原样交给代理服务端**的。必须在 `route.rules` 里加 `{"action": "resolve", "strategy": "ipv4_only"}`，**位置紧跟 `hijack-dns` 之后、排在所有 `route`/`reject`/`bypass` 之前**（放末尾等于没放 —— 首个 route/reject 命中即 `break match`，见 L18）。`route/conn.go:103-104` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，目标变成 IPv4 字面量。`strategy` 不要省。`audit.py` 有 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` / `resolve_not_first` 门禁兜底 |
 | 15 | **出口 IP 的地址族不由客户端决定**。`resolve` 只能保证「本地 → 服务端」这一段是 IPv4 字面量（日志可证）；「服务端 → 目标站」那一段完全由服务端决定（NAT64、服务端 `sniff` 后自行重解析域名等）。⇒ 看到 IPv6 出口时**不要在本机配置里找原因、更不要为了它继续加固本地**，先确认该地址是不是节点本身的 AAAA 记录；要改就去服务端禁用 IPv6 出网。**已证实**：本地已全 IPv4 仍出现 VPS 自身 AAAA 出口；**未证实**：服务端为何在某些时段选 IPv6、禁用 IPv6 是否就能解决（属建议，未在真实 VPS 验证）。详见 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
+| 16 | **上游新增功能必须显式写下「启用 / 不启用 / 必须跟随」**。上游发新版本时，除了「哪些字段要删」（`deprecated`/`removed`），还有「多了哪些新能力」——后者**没有默认答案**，不写就是隐式选择了“不启用”，理由往往是“没注意到”。⇒ 每个新功能在 `docs/version-matrix.json` 里建一条 `kind: "new"`（必填 `adopt` + `reason`，有字段可检测的还要 `expect`），并在 `docs/DECISIONS.md` 记下理由与备选方案。`audit.py` 有 `new_feature_without_adoption` / `new_feature_expect_invalid` / `new_feature_decision_overdue` / `new_feature_uncovered` / `decision_without_record` 门禁兜底 |
+| 17 | **改配置、改流程都先拉仓库、先看 diff**。走到新环境时先 `git clone`（或 `git pull`），在本地产出改动后：**先 `git diff` 给人看、得到同意、才 `commit` / `push`**。**不得直接覆盖已有文件** —— 历史上有过“把已更正过的文档又改回错误结论”的先例（L17 写反 → L18 推翻）。**克隆拿不到 `local/`**（已 `.gitignore`），真实节点只能由用户当场提供（铁律 7） |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -100,6 +102,7 @@ README.md                     ← 人类入口
 singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
 docs/
   LESSONS.md                  ← 【开工先读】事故台账：现象 / 根因 / 为什么没拦住 / 修法 / 对应门禁
+  DECISIONS.md                ← 【开工先读】决策记录：新功能为何启用/不启用、备选方案、前提风险
   WORKFLOW.md                 ← 完整工作流（升级流程 / 生成流程 / 校验流程 / 排障）
   PROTOCOL-MAPPING.md         ← 【核心】分享链接 → outbound 字段映射表
   VERSION-MATRIX.md           ← 逐版本废弃/移除字段总表（由 version-matrix.json 生成，勿手改）
@@ -146,13 +149,37 @@ local/                        ← 【不提交】本机真实节点配置（.git
 ### 任务 B：上游发布新正式版
 
 ```
-1. python tools/upgrade-check.py                 # 对比版本 + 抓 deprecated/migration
-2. 按报告改 docs/version-matrix.json
+1. python tools/upgrade-check.py                 # 看报告：1 版本比对 2 文档 diff 3 矩阵对账 4 升级风险 5 新功能清点
+2a. 【旧字段部分】按报告第 3/4 节改 docs/version-matrix.json（kind=deprecated/removed/…）
+2b. 【新功能部分】按报告第 5 节出「升级清单」，三栏分类：
+    · 必须跟随（旧写法被取代，必须删旧字段）—— 如 1.15 的 tun.stack
+    · 必须决策（新能力，启用/不启用由用户拍板）—— 如 MASQUE / Tailcat / auto_redirect
+    · 可放着（纯内部更新或与场景无关）—— 也要记一笔，否则下次会被当成漏项反复报警
+    ⚠️ 这三栏**必须逐条给用户看、等用户拍板**，不得自行决定（铁律 16）
+2c. 用户拍板后，写两个地方：矩阵 entries[] 加 kind="new" 条目（机器依据，
+    含 adopt / reason / since / decide_by / keywords）；
+    docs/DECISIONS.md 加 D<n> 条目（人的理由，含备选方案与前提风险）
 3. python tools/gen-docs.py                      # 重新生成 VERSION-MATRIX.md
 4. cp -r profiles/<旧ver> profiles/<新ver>，按报告逐项修正
 5. python tools/audit.py --version <新ver> profiles/<新ver>/*.json
 6. 更新 singbox_version.txt；确认无误后 upgrade-check.py --write 刷新文档快照
 ```
+
+> ⚠️ 流程 B 改流程本身时，四个文件必须同步（见 `docs/LESSONS.md` L22）：
+> `AGENTS.md`（本文）/ `README.md` / `docs/WORKFLOW.md` / `docs/DECISIONS.md`。
+
+### 需用户同意的六个动作（铁律 17 的具体清单）
+
+以下六件事**每次都必须先说、得到同意才做**，不在这六条内的可直接执行：
+
+| # | 动作 | 为什么需要同意 |
+|---|---|---|
+| 1 | `git commit` | 落盘即进入历史 |
+| 2 | `git push` | 一旦推到公开仓库就**收不回来**（`ec5d300` 泄漏节点信息就是靠 force-push 补的，且旧 commit 仍可按 SHA 取到） |
+| 3 | 改 `singbox_version.txt` | 这是“唯一版本真相”，改了等于宣布全仓库已对齐新版 |
+| 4 | 改矩阵里的 `adopt` | 等于替用户决定“用不用这个新功能” |
+| 5 | **删除任何现有字段** | 删错了就是真机没网（L4 教训：当年删了 `auto_detect_interface`） |
+| 6 | `upgrade-check.py --write` | 会把上游文档快照整体覆盖 —— **覆盖会丢掉本地手工标注**，先 diff |
 
 ### 任务 C：用户反馈"跑不起来"
 
@@ -208,9 +235,10 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 七项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端）+ 教训台账一致性 + sing-box check
+# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + sing-box check
 # audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
-# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上
+# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上，
+# 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
 

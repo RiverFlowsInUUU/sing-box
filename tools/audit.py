@@ -234,6 +234,30 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
                     f" → {e.get('replacement', '')}",
                 )
 
+        elif kind == "new":
+            # 新功能采纳：expect=present 要求配置里必须有，expect=absent 要求必须没有。
+            # 注意与 deprecated 反向：这里检查的是「采纳后该字段在不在」，不是「有没有踩废弃」。
+            since = e.get("since")
+            if since and not ver_ge(target_version, since):
+                continue  # 该版本还没这个功能
+            has_path = bool(e.get("path"))
+            expect = e.get("expect")
+            if not has_path or expect not in ("present", "absent"):
+                continue  # 无字段可检测（纯版本更新类）或数据不完整，由 audit_new_features 兜
+            found = bool(find_paths(cfg, e["path"]))
+            if expect == "absent" and found:
+                rep.error(
+                    e["id"],
+                    f"[{e['id']}] 配置里出现了 {e['path']}，但本仓库对该新功能的决策是"
+                    f"「不启用」（{e.get('title', '')}）—— 要么删掉字段，要么把矩阵里的 adopt 改掉并写明理由",
+                )
+            elif expect == "present" and not found:
+                rep.error(
+                    e["id"],
+                    f"[{e['id']}] 矩阵要求配置里必须有 {e['path']}（adopt={e.get('adopt')}），但没找到——"
+                    f"{e.get('title', '')}",
+                )
+
         elif kind == "semantic":
             if e.get("semantic") == "remote_rule_set_without_http_client":
                 dep, rem = e.get("deprecated_in"), e.get("removed_in")
@@ -977,6 +1001,152 @@ def _free_port():
     return port
 
 
+# ---------------------------------------------------------------- 新功能采纳
+
+# 采纳决策的合法取值：yes=启用 / no=明确不启用 / must=必须跟随（旧写法被取代）
+ADOPT_VALUES = ("yes", "no", "must")
+# 有字段可检测的 kind=new 条目，expect 必须显式写；否则门禁无从判断
+NEW_WITH_PATH_EXPECT = ("present", "absent")
+CHANGELOG = ROOT / "docs" / "upstream-changelog.md"
+# changelog 里这些行是噪音，不参与「新功能是否被矩阵覆盖」的比对
+_CHANGELOG_NOISE = re.compile(
+    r"^(fixes and improvements"       # 纯修补段
+    r"|important changes since"        # 导言段
+    r"|\*\*\d+\*\*\s*:|\*\*\d+\*\*\s*$"  # 脚注定义体（**1**: 这种行，尚未 lstrip）
+    r"|\d+\*\*\s*:"                    # 脚注定义体（lstrip('*') 之后只剩 `1**:`）
+    r"|https?://"                      # 裸链接行
+    r"|see\s+\[)",                     # “See [XXX](...)” 这类脚注指引
+    re.I,
+)
+
+
+def _changelog_features(floor_version: str):
+    """从 docs/upstream-changelog.md 抽出「>= floor_version」的新功能条目。
+
+    **故意包含 alpha / beta / rc 段**：这正是提前发现即将到来的新功能的唯一途径
+    （正式版发布时这些条目会再出现一次，故按归一化文本去重）。
+    版本号归一化：`1.15.0-alpha.7` → `1.15.0`。
+
+    栏掉纯修补段（`Fixes and improvements`）与空行，返回去重后的 [(版本, 条目原文), ...]。
+    """
+    if not CHANGELOG.exists():
+        return []
+    text = CHANGELOG.read_text(encoding="utf-8")
+    seen = set()
+    out = []
+    for m in re.finditer(r"^####\s+([0-9][0-9.\-a-zA-Z]*)\s*$", text, re.M):
+        raw = m.group(1)
+        base = re.match(r"(\d+\.\d+\.\d+)", raw)
+        if not base:
+            continue
+        ver = base.group(1)
+        if not ver_ge(ver, floor_version):
+            continue
+        end = text.find("\n####", m.end())
+        body = text[m.end(): end if end != -1 else len(text)]
+        for line in body.splitlines():
+            s = line.strip()
+            if not s.startswith("*"):
+                continue
+            feat = s.lstrip("*").strip()
+            feat = re.sub(r"\s*\*\*\d+\*\*\s*$", "", feat).strip()  # 去掉脚注标记 **1**
+            if not feat or _CHANGELOG_NOISE.match(feat):
+                continue
+            key = feat.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((ver, feat))
+    return out
+
+
+def audit_new_features(rep: Report, matrix, target_version: str):
+    """新功能采纳台账校验（仓库级，每份配置都跑一次之外单独跑一次）。
+
+    三道检查：
+      1. 数据完整性：kind=new 必须有合法 adopt + 非空 reason；有 path 的还必须有 expect。
+      2. 未卜先知：decide_by 已过期而 adopt 仍缺失/非法 → ERROR（不能靠「忘了」来默认不启用）。
+      3. changelog 覆盖：上游 changelog 里 >= 锁定版本 的正式版新功能条目，必须被某条 kind=new
+         的 keywords 覆盖；否则 ERROR —— 防止「上游加了新功能，仓库浑然不知」。
+    """
+    news = [e for e in matrix.get("entries", []) if e.get("kind") == "new"]
+    if not news:
+        rep.error(
+            "new_feature_without_adoption",
+            "version-matrix.json 里没有任何 kind=\"new\" 条目 —— 新功能采纳机制等于不存在"
+            "（上游加了什么功能，仓库不会知道）",
+        )
+        return
+
+    for e in news:
+        eid = e.get("id", "?")
+        adopt = e.get("adopt")
+        # 1) adopt 必填且合法
+        if adopt not in ADOPT_VALUES:
+            rep.error(
+                "new_feature_without_adoption",
+                f"[{eid}] kind=new 但 adopt={adopt!r} 不合法（应为 {'/'.join(ADOPT_VALUES)} 之一）："
+                f"{e.get('title', '')} —— 新功能必须写下「启用还是不启用」的明确决定，"
+                f"不允许留空或写「待定」",
+            )
+        # 2) reason 必填
+        if not str(e.get("reason") or "").strip():
+            rep.error(
+                "new_feature_without_adoption",
+                f"[{eid}] kind=new 但没写 reason —— 决策没有理由，下一个人无法复核",
+            )
+        # 3) 有 path 的必须写 expect，且必须与 adopt 自洽
+        if e.get("path"):
+            if e.get("expect") not in NEW_WITH_PATH_EXPECT:
+                rep.error(
+                    "new_feature_expect_invalid",
+                    f"[{eid}] 有 path 但 expect={e.get('expect')!r} 不合法"
+                    f"（应为 {'/'.join(NEW_WITH_PATH_EXPECT)}）",
+                )
+            elif adopt == "no" and e.get("expect") != "absent":
+                rep.error(
+                    "new_feature_expect_invalid",
+                    f"[{eid}] adopt=no（不启用）却写 expect={e['expect']!r} —— "
+                    f"不启用就该要求配置里没有这个字段，应写 \"absent\"",
+                )
+        # 4) decide_by 过期仍未决策 → 不能靠「忘了」蒙混过关
+        db = e.get("decide_by")
+        if db and not ver_ge(db, target_version):
+            rep.error(
+                "new_feature_decision_overdue",
+                f"[{eid}] 决策截止版本 {db} 已到（当前锁定 {target_version}）仍未落地："
+                f"{e.get('title', '')} —— 请补上 adopt/reason，或把 decide_by 往后挪并说明原因",
+            )
+
+    # 5) changelog 覆盖比对
+    feats = _changelog_features(target_version)
+    if not feats:
+        rep.info(
+            "new_feature_covered",
+            f"上游 changelog 中 >= {target_version} 没有可识别的新功能条目（可能全部是修补段），无需比对",
+        )
+        return
+    uncovered = []
+    for ver, feat in feats:
+        low = feat.lower()
+        hit = any(k and k.lower() in low for e in news for k in (e.get("keywords") or []))
+        if not hit:
+            uncovered.append((ver, feat))
+    if uncovered:
+        rep.error(
+            "new_feature_uncovered",
+            f"上游 changelog 里 >= {target_version} 的正式版新功能有 {len(uncovered)} 条没被矩阵覆盖"
+            f"（keywords 比对）：" + "；".join(f"{v} {f}" for v, f in uncovered[:6])
+            + (" …" if len(uncovered) > 6 else ""),
+        )
+    else:
+        rep.info(
+            "new_feature_covered",
+            f"上游 changelog 中 >= {target_version} 的正式版新功能共 {len(feats)} 条，"
+            f"全部被 {len(news)} 条 kind=new 条目的 keywords 覆盖",
+        )
+
+
 # ---------------------------------------------------------------- 教训台账校验
 
 # 框架性/非配置类 code，不要求有 LESSONS 条目
@@ -1057,6 +1227,71 @@ def audit_lessons(rep: Report):
             )
 
 
+# ---------------------------------------------------- 决策记录双向校验
+
+DECISIONS = ROOT / "docs" / "DECISIONS.md"
+DECISION_HEAD_RE = re.compile(r"^##\s+(D\d+)\s+(.+)$", re.M)
+
+
+def audit_decisions(rep: Report, matrix, target_version: str):
+    """校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上。
+
+    为什么需要：矩阵只存一行 `reason`，写不下背景 / 备选方案 / 代价权衡。
+    升级后回头看「当初为什么不用 MASQUE」时答案在 DECISIONS.md。
+    两边都写、都交叉检查，才不会出现「矩阵有决定、但没人知道为什么」。
+
+    方向一：每条 kind=new 必须在 DECISIONS.md 有一个 D<n> 条目引用它的 id；
+    方向二：DECISIONS.md 里引用的矩阵 id 必须真实存在（防止改矩阵后文档沦为谎言）。
+    """
+    if not DECISIONS.exists():
+        rep.error(
+            "decisions_missing",
+            "docs/DECISIONS.md 不存在：新功能只写了结论没有理由，下一个人无法复核",
+        )
+        return
+    text = DECISIONS.read_text(encoding="utf-8")
+    ids_in_matrix = {e.get("id") for e in matrix.get("entries", [])}
+    news = [e for e in matrix.get("entries", []) if e.get("kind") == "new"]
+
+    # 抽出每个 D<n> 小节的正文（用于查它是否引用了某个矩阵 id）
+    heads = list(DECISION_HEAD_RE.finditer(text))
+    sections = []
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        sections.append((m.group(1), text[m.start():end]))
+
+    # 方向一：矩阵条目必须被某个 D 小节引用
+    for e in news:
+        eid = e.get("id")
+        if not any(eid in body for _, body in sections):
+            rep.error(
+                "decision_without_record",
+                f"矩阵条目 [{eid}] 在 docs/DECISIONS.md 里没有对应的 D 条目 —— "
+                f"请补一段写清「为什么这么决策 / 备选方案 / 前提风险」（{e.get('title', '')}）",
+            )
+
+    # 方向二：DECISIONS.md 的 D 条目里引用的 id 必须真实存在
+    # （只扫 D 小节正文，不扫文首的格式模板 —— 模板里的占位 id 不是真实引用）
+    refd = set()
+    for _, body in sections:
+        refd |= set(re.findall(r"`(new_[a-z0-9_]+)`", body))
+    for eid in sorted(refd - ids_in_matrix):
+        rep.error(
+            "decision_references_unknown",
+            f"docs/DECISIONS.md 引用了矩阵里不存在的条目 `{eid}` —— "
+            f"可能是矩阵改过 id 或删了条目，文档已成谎言",
+        )
+    if not rep.ok():
+        return  # 已有 ERROR 时不再报「一致」，避免在失败输出里混一条安慰信息
+    if not sections:
+        rep.info("decisions_ok", "docs/DECISIONS.md 尚无 D 条目（新功能台账为空时才允许）")
+    elif news:
+        rep.info(
+            "decisions_ok",
+            f"docs/DECISIONS.md 与矩阵双向一致：{len(news)} 条 kind=new 均有 D 条目收录",
+        )
+
+
 # ---------------------------------------------------------------- 入口
 
 
@@ -1130,6 +1365,24 @@ def main():
     if not lessons_rep.ok():
         failed = True
 
+    # 新功能采纳台账是仓库级校验（不依赖具体配置），单独跑一次
+    newfeat_rep = Report("docs/version-matrix.json")
+    audit_new_features(newfeat_rep, matrix, version)
+    if newfeat_rep.items and not args.json:
+        for lv, code, msg in newfeat_rep.items:
+            print(f"[{lv[0]}] docs/version-matrix.json: {msg}")
+    if not newfeat_rep.ok():
+        failed = True
+
+    # 决策记录 ↔ 矩阵双向校验（同上，与具体配置无关）
+    decisions_rep = Report("docs/DECISIONS.md")
+    audit_decisions(decisions_rep, matrix, version)
+    if decisions_rep.items and not args.json:
+        for lv, code, msg in decisions_rep.items:
+            print(f"[{lv[0]}] docs/DECISIONS.md: {msg}")
+    if not decisions_rep.ok():
+        failed = True
+
     if args.files:
         # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
@@ -1181,7 +1434,11 @@ def main():
             failed = True
 
     if args.json:
-        all_results = [(lessons_rep, {"matrix"})] + results
+        all_results = [
+            (lessons_rep, {"matrix"}),
+            (newfeat_rep, {"new-features"}),
+            (decisions_rep, {"decisions"}),
+        ] + results
         print(
             json.dumps(
                 [
