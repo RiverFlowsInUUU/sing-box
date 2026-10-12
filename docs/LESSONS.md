@@ -423,12 +423,11 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
   `route/conn.go:103-104` 随即改走 `DialSerialNetwork`，
   `common/dialer/default_parallel_network.go:16-45` 最终 `dialer.DialContext(ctx, network, M.SocksaddrFrom(address, destination.Port))`
   → **拨号目标是 IPv4 字面量，代理收到的就是 IP，服务端没有选择余地。**
-- 放**最后一条规则**（`geoip-cn→direct` 之后）：`resolve` 是继续匹配的中间动作
-  （`route/route.go:670-705`，只有 `route`/`reject`/`hijack-dns`/`bypass` 才 `break match`），
-  放最后只对落到 `final: "Proxy"` 的境外流量多做一次查询，国内直连不额外解析。
-- 位置放最后也不破坏前面的规则：`rule_item_cidr.go`（geoip）、`rule_item_ip_is_private.go`、
-  `rule_item_ip_accept_any.go`、`rule_item_preferred_by.go` 都已支持 `metadata.DestinationAddresses`；
-  `rule_item_rule_set.go` 只匹配域名项，不会被「替换出来的 IP」误命中。
+- 放**在 `{"protocol":"dns","action":"hijack-dns"}` 之后、`{"ip_version":6,"action":"reject"}` 之前**。
+  ⚠️ **本条目最初写的“放在最后一条规则”是错的，已由 L18 推翻** —— `resolve` 是继续匹配的中间动作，
+  但 `route`/`reject`/`bypass` 一命中就 `break match`，放在末尾只会作用于“落到 final 的那部分流量”，
+  命中 `route(AI)` / `route(AD)` / `route(direct)` 的域名仍然走不到它。具体复现见 L18。
+- 位置要求：必须排在所有 `route`/`reject`/`bypass` 之前（详见 L18）。
 - `strategy` 必须**显式写 `ipv4_only`**：不写就继承 `dns.strategy`，哪天有人把 `dns.strategy` 改成 `prefer_ipv4`
   就会静默退化成「优先 IPv4 但允许 IPv6」。
 
