@@ -36,7 +36,7 @@ jobs:
           install -m 755 "/tmp/sing-box-${V}-linux-amd64/sing-box" /usr/local/bin/sing-box
           sing-box version
 
-      - name: 配置与仓库门禁（8 类配置风险 + 台账 / 决策 / 防泄漏 / 工具自检 / 模板文字）
+      - name: 配置与仓库门禁（9 类配置风险 + 台账 / 决策 / 防泄漏 / 工具自检 / 模板文字）
         env:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
@@ -61,6 +61,7 @@ jobs:
           echo "  · 防泄漏扫查（被跟踪文件 + commit message）—— sensitive_ip_in_repo"
           echo "  · 工具自检（tools/*.py 能否编译、关键工具不变量）—— tool_syntax_error / tool_selftest_failed"
           echo "  · 模板文字检查（_rules_of_thumb 有没有写过期的口径）—— template_thumb_stale"
+          echo "  · DNS 层广告拦截（白名单配套 / 动作 / 顺序与 route 层各自校验）—— dns_ad_without_whitelist / dns_ad_target / dns_ad_order"
 
       - name: 人读版矩阵是否与 JSON 同步
         run: |

@@ -368,7 +368,8 @@ def _audit_jinx(route, rep: Report):
                 f"route.rule_set[{i}] ({tag}) 必须是 format='source'（Jinx 发布的是 JSON 源格式，非 .srs）",
             )
 
-    # 广告规则集不得出现在 dns.rules 的 rule_set 里（那是 DNS 分流，不是拦截）
+    # route 层：广告拦截集只能落到 AD 组或直接 reject
+    #     （DNS 层另有一套约束，见 _audit_dns_adblock / docs/LESSONS.md L28）
     for i, r in enumerate((route.get("rules") or [])):
         if not isinstance(r, dict):
             continue
@@ -398,6 +399,97 @@ def _audit_jinx(route, rep: Report):
                 f"规则顺序错误：{a}（第 {pos[a]} 条）必须排在 {b}（第 {pos[b]} 条）之前。"
                 "国内广告域名多数也算大陆域名，geosite-cn 排前面会先放行、广告规则失效。",
             )
+
+
+DNS_AD_SETS = ("jinx-ads", "awanue-ads")
+
+
+def _audit_dns_adblock(cfg, rep: Report):
+    """DNS 层广告拦截（可选启用）的成对性与顺序约束 —— docs/LESSONS.md L28。
+
+    启用形态（本项目约定）：
+
+        { "rule_set": ["jinx-direct"],            "action": "route",      "server": "dns-cn"  }
+        { "rule_set": ["jinx-ads", "awanue-ads"], "action": "predefined", "rcode": "NXDOMAIN" }
+
+    为什么要单独校验：`dns.rules` 与 `route.rules` 是**两份独立的顺序表**，改一处极易忘另一处，
+    而两处错误都是**静默**的 ——
+      · 白名单排到拦截之后：白名单失效（实测 47 条域 100% 被拦截集覆盖），
+        微信 / 推送 / 统计类域名集体 NXDOMAIN；
+      · 拦截排到 `geosite-cn` 之后：国内广告域名先被 `route dns-cn` 放行，DNS 拦截永不生效。
+    """
+    dns = cfg.get("dns") or {}
+    rules = dns.get("rules") or []
+    if not isinstance(rules, list):
+        return
+
+    def sets_of(r):
+        v = r.get("rule_set") if isinstance(r, dict) else None
+        return v if isinstance(v, list) else []
+
+    ad_idx = [
+        i
+        for i, r in enumerate(rules)
+        if any(t in sets_of(r) for t in DNS_AD_SETS)
+    ]
+    wl_idx = [i for i, r in enumerate(rules) if "jinx-direct" in sets_of(r)]
+    if not ad_idx and not wl_idx:
+        return  # 未启用 DNS 层广告拦截，不约束
+
+    # 1) 拦截集必须有白名单配套（缺白名单 = 全量拦截，属事故）
+    if ad_idx and not wl_idx:
+        rep.error(
+            "dns_ad_without_whitelist",
+            f"dns.rules 引入了广告拦截集 {[t for t in DNS_AD_SETS]}（第 {ad_idx} 条），"
+            "却没有配套的 jinx-direct 白名单。Jinx 发布的白名单是拦截集的豁免名单，"
+            "缺了它会把本就该放行的域名一起拦掉。补一条 "
+            '`{"rule_set": ["jinx-direct"], "action": "route", "server": "dns-cn"}` 并排在拦截之前',
+        )
+
+    # 2) 动作必须正确：白名单放行(route)、拦截集拦截(predefined/reject)
+    for i in wl_idx:
+        if rules[i].get("action") != "route":
+            rep.error(
+                "dns_ad_target",
+                f"dns.rules[{i}] 用 jinx-direct 白名单但 action="
+                f"{rules[i].get('action')!r}，白名单必须是 route（放行到 dns-cn）",
+            )
+    for i in ad_idx:
+        act = rules[i].get("action")
+        if act not in ("predefined", "reject"):
+            rep.error(
+                "dns_ad_target",
+                f"dns.rules[{i}] 用广告拦截集但 action={act!r}；DNS 层拦截只能落在 "
+                "predefined（如 rcode=NXDOMAIN）或 reject，"
+                "写成 route 只会把广告域名送去某个 DNS 服务器解析，等于没拦",
+            )
+        if act == "route":
+            rep.error(
+                "dns_ad_target",
+                f"dns.rules[{i}] 把广告拦截集 route 到了 server={rules[i].get('server')!r}，等于没拦",
+            )
+
+    # 3) 顺序：白名单 → 拦截 → geosite-cn（两级都是「先命中先终止」，排错即静默失效）
+    pos_cn = None
+    for i, r in enumerate(rules):
+        if "geosite-cn" in sets_of(r):
+            pos_cn = i
+            break
+    if wl_idx and ad_idx and min(wl_idx) > min(ad_idx):
+        rep.error(
+            "dns_ad_order",
+            f"dns.rules 顺序错误：白名单 jinx-direct 在第 {min(wl_idx)} 条，"
+            f"却排在广告拦截集（第 {min(ad_idx)} 条）之后。"
+            "实测 Jinx 白名单 47 条域 100% 被拦截集覆盖（如 gm.mmstat.com ← mmstat.com），"
+            "白名单必须排在拦截之前",
+        )
+    if ad_idx and pos_cn is not None and min(ad_idx) > pos_cn:
+        rep.error(
+            "dns_ad_order",
+            f"dns.rules 顺序错误：广告拦截集在第 {min(ad_idx)} 条，"
+            f"却排在 geosite-cn（第 {pos_cn} 条）之后。"
+            "国内广告域名多数也算大陆域名，会先被 geosite-cn 放行、拦截永不生效",
+        )
 
 
 def audit_repo_rules(cfg, rep: Report):
@@ -563,6 +655,8 @@ def audit_repo_rules(cfg, rep: Report):
     # 2b) Jinx 广告/放行规则集：必须成对存在，且顺序必须正确
     #     顺序错了等于没加：geosite-cn 排到拦截之前会先命中放行，广告规则再无机会执行。
     _audit_jinx(route, rep)
+    # 2c) DNS 层广告拦截（可选）：route 层与 dns 层是两份独立的顺序表，各自校一遍
+    _audit_dns_adblock(cfg, rep)
 
     # 3) 出站 tag 唯一 + 引用完整性
     outs = cfg.get("outbounds", [])

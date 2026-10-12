@@ -110,7 +110,7 @@ python tools/upgrade-check.py
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`；`Proxy` 与 `AI` 都是 urltest，组内只放真实节点、不嵌套组
 7. **任何时候、任何文件都不放真实节点**——范围是**整个被跟踪仓库**（不只是 `profiles/`，`docs/` 的散文同样公开）；含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送。`audit.py` 有 `placeholder_server` + `sensitive_ip_in_repo` 兜底
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
-9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`
+9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`。可选加固：`dns.rules` 里同样插入白名单 → 拦截（`predefined` NXDOMAIN）两条，**且必须排在 `geosite-cn` 之前**；`dns.rules` 与 `route.rules` 是两份独立的顺序表，改一处必须改另一处（L28）
 10. 旧版本配置只归档不删除
 11. **不在本机乱试**——本机有 OpenClash 网关会劫持 DNS，本机连通性结论一律作废；只读配置 / 官方文档 / 源码
 12. **tun + auto_route 必须写 `route.auto_detect_interface: true`**——不写就是“能启动但没网”

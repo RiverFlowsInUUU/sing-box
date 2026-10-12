@@ -1131,6 +1131,66 @@ L10/L12/L13 连 `**修法**` 都没有（只有 `**门禁**`）。
 
 ---
 
+## L28 `dns.rules` 与 `route.rules` 是两份独立的顺序表 —— 只改一处就是静默失效
+
+**现象**
+
+把 Jinx / 秋风广告规则前置到 DNS 层后，配置能启动、`sing-box check` 也过，
+但结果是**要么白名单没生效**（微信、极光推送、友盟统计类域名集体 NXDOMAIN），
+**要么拦截没生效**（国内广告域名照旧解析成功），
+而且**日志里看不出任何异常** —— 只有逐条看 `dns.rules` 的求值顺序才能发现。
+
+**根因**
+
+- 这两张表的匹配语义完全一样：`dns/router.go` 的规则循环与 `route/route.go:670-705` 的 `matchRule`
+  都是**首个终止动作命中即 break**，`predefined` / `reject` / `route` 都是终止动作。
+- 但它们是**两份独立的顺序表**，各写各的，没有任何机制保证两者一致。
+- 顺序错的两个方向都是静默的：
+  - **白名单排到拦截之后** —— 实测 Jinx 白名单 47 条域（`local/android-usai.json` 用到的
+    `jinx-direct`：43 条 `domain` + 4 条 `domain_suffix`）**100% 被拦截集覆盖**
+    （`gm.mmstat.com` ← `mmstat.com`、`jpush.cn` 及其 9 个子域 ← `jpush.cn`、
+    `zlink.ugsdk.cn` ← `ugsdk.cn`、`seeds-sina.xycdn.com` ← `xycdn.com`）。
+    拦截集一旦排在前面，白名单**一条都救不回来**。
+  - **拦截排到 `geosite-cn` 之后** —— 国内广告域名多数也算大陆域名，
+    会先被 `{"rule_set":["geosite-cn"],"action":"route","server":"dns-cn"}` 放行。
+- 另一类静默错误：把广告拦截集写成 `"action": "route"`。DNS 层的 `route` 是「换个服务器去解析」，
+  不是「拒绝解析」⇒ 广告域名照常解析成功，**看起来配置完全正常**。
+
+**为什么没被拦住**
+
+`_audit_jinx()` 只校 `route.rules` 那一侧：
+  · 顺序判据用的是 `route.rules` 里 `rule_set` 的首次出现位置；
+  · 与 DNS 无关。
+而 `dns.rules` 侧当时唯一的检查是「引用完整性」（`dns_rule_ruleset_missing`）——
+它只问「这个 tag 存不存在」，不问「顺序对不对、动作对不对」。
+更糟的是：早先 `_audit_jinx` 里还写死过一条
+「**广告规则集不得出现在 `dns.rules` 的 `rule_set` 里（那是 DNS 分流，不是拦截）**」——
+这条注释把「DNS 层拦截」整个判成了非法用法，直接挡住了后来这次正确的实装。
+⇒ 教训：**约束要按「语义」写，不能按「当下这种做法」写**。
+
+**修法**
+
+- `dns.rules` 里插入两条，且顺序固定（详见
+  `docs/evidence/2026-10-12-dns-layer-adblock-feasibility.md`）：
+
+  ```json
+  { "rule_set": ["jinx-direct"],            "action": "route",      "server": "dns-cn"  },
+  { "rule_set": ["jinx-ads", "awanue-ads"], "action": "predefined", "rcode": "NXDOMAIN" }
+  ```
+
+  两条都必须排在 `geosite-cn → dns-cn` **之前**（白名单 → 拦截 → geosite-cn）。
+  拦截动作只能用 `predefined` 或 `reject`；**不能用 `route`**。
+- 新增 `_audit_dns_adblock(cfg, rep)` 把上述约束机器化；同时把 `_audit_jinx` 里那条
+  反注释改成「route 层广告拦截集只能落到 AD 组或直接 reject（DNS 层见 L28）」。
+- **route 层规则不能删**：任何绕过 sing-box DNS 的解析（应用自带 DoH/DoT、系统私有 DNS）
+  只有在 route 层才拦得住。DNS 层是**前置**，不是**替代**。
+
+**门禁**：`dns_ad_without_whitelist`, `dns_ad_target`, `dns_ad_order`
+
+**涉及**：`dns.rules`、`route.rules`、`local/android-usai.json`、`tools/audit.py`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

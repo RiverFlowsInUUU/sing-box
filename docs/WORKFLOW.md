@@ -146,6 +146,8 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
    其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
    `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
+   **若启用了 DNS 层前置拦截**（见 `docs/DECISIONS.md` D13），`dns.rules` 里还有第二套顺序
+   （白名单 → 拦截 → `geosite-cn`）需要同步维护 —— 两张表各写各的，排错即静默失效（L28）。
 4. `AD` 分组**只允许** `block` 和 `direct`，永远不要把代理节点放进去。
 
 ### A5. 跑门禁

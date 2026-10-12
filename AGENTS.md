@@ -43,7 +43,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
 | 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + commit message**（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态（2026-10-12 重建仓库后）**：旧对象已随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。上面那句「仍可按 SHA 直取」是**重建前**的事实，保留它是为了说明“force-push 本身不够”——**不要**据此以为当前仓库里还躺着一个可取到的旧对象。 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
-| 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
+| 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |<br>**可选加固：DNS 层前置拦截**。`dns.rules` 里插两条（`jinx-direct` → `route` `dns-cn`、`jinx-ads`+`awanue-ads` → `predefined` `rcode: NXDOMAIN`），两条都必须排在 `geosite-cn` **之前**。**`dns.rules` 与 `route.rules` 是两份独立的顺序表**，改一处必须改另一处，否则静默失效（L28）。拦截动作只能用 `predefined`/`reject`，**写成 `route` 等于没拦**。**route 层规则不能删**：应用自带 DoH/DoT 只有 route 层拦得住。详见 `docs/evidence/2026-10-12-dns-layer-adblock-feasibility.md` 与 `docs/DECISIONS.md` D13 |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
 | 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」**。<br>**唯一例外（允许且推荐）**：用 `log.level = debug` 读 **sing-box 自己的日志**来判断「本机往出站递了什么」——`router: resolved [...]` 与 `outbound connection to <目标>` 是本机产生的记录，不受网关劫持影响（能据此区分「目标是 IP 字面量」还是「目标是域名」）。证据须存档到 `docs/evidence/` |
 | 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
@@ -104,7 +104,7 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
 templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
-  audit.py                    ← 门禁：8 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
+  audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字
   diff_config.py              ← 两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
   upgrade-check.py            ← 上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md（勿手改后者）
@@ -224,7 +224,7 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
+# 九项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义（route 层 + DNS 层）/ IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
 # audit.py 自己找 sing-box（ROOT/bin/ 或 PATH）；也认环境变量 SINGBOX_BIN
 #   ⚠️ 本机没有 bin/ 也没装进 PATH 时，--run 会**静默降级**为 INFO 跳过（看起来照样 PASS）。
 #   要真跑就把本机路径放进环境变量（仓库里不许写本机绝对路径，铁律 7）：
@@ -262,6 +262,12 @@ WARN 可以交付，但必须在回复里向用户说明。
   否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
 - 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `skip_check_template`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
 - 另有 `lesson_missing_gate_line`：每条教训正文里必须有 `**门禁**：` 行（没有门禁就写「无」）——否则台账的机读格式只是口号。
+
+**DNS 层广告拦截**（`_audit_dns_adblock()`，跟随 `audit_repo_rules()` 执行）：
+- `dns.rules` 引用 `jinx-ads` / `awanue-ads` 时：必须有 `jinx-direct` 白名单配套（`dns_ad_without_whitelist`）；
+  白名单必须是 `route`、拦截集必须是 `predefined`/`reject` 且不得 `route` 到某个 server（`dns_ad_target`）；
+  顺序必须为 白名单 → 拦截 → `geosite-cn`（`dns_ad_order`）。
+- 动机：两张顺序表各写各的，排错两个方向**都静默**（L28）。
 
 **模板文字检查**（`audit_template_text()`，每次跑都执行）：
 - `templates/groups.json` 的 `_rules_of_thumb` 是全文唯一**无人消费**的部分（没有工具读它），因此最容易过期。
