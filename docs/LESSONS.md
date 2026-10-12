@@ -447,6 +447,73 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 
 **边界（必须如实告知用户）**：本手段能保证**代理连接的目标地址是 IPv4**。
 若服务端自己还要再解析一层（例如它按域名二次请求），那一段仍不受本地控制。
+⚠️ **但“放在 `route.rules` 末尾”这个位置本身是错的，L17 当时没看出来 —— 见 L18。**
+
+---
+
+## L18 `resolve` 放末尾等于没放 —— 首个 route/reject 一命中就 break match
+
+**现象**（用户真机追问，m03112）
+
+> 「刚才 A 也漏 ipv6 是不是没法解决？」
+> 即：已经按 L17 加了 `{"action":"resolve","strategy":"ipv4_only"}`（放 `route.rules` 末尾），
+> `ip.net.coffee` 首页的「分流出口 IP 汇总」里那 18 个域名**仍然显示 IPv6 出口**。
+
+**根因（源码路径 + 本机复现）**
+
+- `route/route.go:688-705` 的 `matchRule` 循环里，`resolve` 是「继续匹配」的中间动作；
+  只有 `route` / `reject` / `hijack-dns` / `bypass` 会 `break match`（`actionType == C.RuleActionTypeRoute || Reject || HijackDNS`，
+  以及 `RuleActionTypeBypass` 且带 `outbound`）。
+- 因此 **落在末尾的 `resolve` 只对“前面所有规则都没命中”的流量生效** —— 也就是最终走到 `final` 的那部分。
+  任何被 `route(AI)` / `route(AD)` / `route(direct)` 命中的域名连接，
+  在命中那一刻就 `break match` 了，**根本走不到末尾那条 resolve**，域名原样交给代理服务端。
+- 而 `dns.rules` 里的 `geosite-ai` / `geosite-cn` 是 **DNS 规则集**（只决定用哪个 DNS server 查），
+  不代表这条解析结果会写进 `metadata.DestinationAddresses`；
+  `route/conn.go:103-104` 仍因 `DestinationAddresses` 为空而走 `this.DialContext(...)`，把域名发给服务端。
+
+**本机决定性复现**（`sing-box 1.14.3`，tun 换 mixed，`log.level=debug`）
+
+| 顺序 | 访问 `claude.ai` | 访问 `example.org` | `resolved [` 条数 |
+|---|---|---|---|
+| resolve 在**末尾**（= L17 的做法） | `match[7] rule_set=geosite-ai => route(AI)`，**无 resolve 行** | `match[11] => resolve(ipv4_only)` | 1（仅 example.org） |
+| resolve 在 **hijack-dns 之后**（修法） | `match[2] => resolve(ipv4_only)` → `match[8] rule_set=geosite-ai => route(AI)` | 同样先 resolve | 4（含 `claude.ai` → `160.79.104.10`） |
+
+修后 `claude.ai` 被解析成 `160.79.104.10`（Anthropic IPv4）、`api.openai.com` 同理，
+而 `www.qq.com` 也先 resolve 一次（`121.14.77.221`）再被 `geosite-cn → direct` 命中 —— 国内直连多一次本地查询，代价可接受。
+
+**修法**
+
+把 `{"action": "resolve", "strategy": "ipv4_only"}` 从 `route.rules` **末尾**前移到
+**紧跟 `{"protocol":"dns","action":"hijack-dns"}` 之后、`{"ip_version":6,"action":"reject"}` 之前**：
+
+```jsonc
+"rules": [
+  { "action": "sniff" },
+  { "protocol": "dns", "action": "hijack-dns" },
+  { "action": "resolve", "strategy": "ipv4_only" },   // 必须在这里
+  { "ip_version": 6, "action": "reject" },
+  { "ip_is_private": true, "action": "route", "outbound": "direct" },
+  // ... 其余 rule_set 规则 ...
+]
+```
+
+⚠️ 两个副作用（已实测，如实告知）：
+
+1. `{"ip_version":6,"action":"reject"}` 原本靠 `metadata.Destination.IsIPv6()` 兜一层；
+   resolve 前移后 `DestinationAddresses` 非空，`rule_item_ipversion.go` 的 `Match` 只读 `metadata.IPVersion`
+   **和 `Destination.IsIP()`**，不读 `DestinationAddresses` —— 域名连接的 IPv6 不再被这条 reject 拦（IPv4-only 由 resolve 保证，不靠它）。
+2. 国内域名也会先走一次本地解析，`geoip-cn` 因此能按「解析出的 IP」判定，命中面反而更准。
+
+**为什么没被拦住**
+
+- `sing-box check` 与 `run` **都不会报任何错**；resolve 位置错只是“静默不生效”。
+- L17 当时把「放在末尾只对落到 final 的流量多做一次查询」当成优点写进了文档 —— **结论写反了**，
+  这是「拿源码推理代替真机 debug 日志验证」的代价。
+
+**门禁**：`resolve_not_first`
+
+**涉及**：`tools/audit.py`（6b 节）；`profiles/1.14/{android,desktop,ios}-lazy.json`、
+`local/{android-usai,android-A-dns-ipv4only,android-B-full-ipv4}.json`
 
 ---
 

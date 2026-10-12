@@ -215,6 +215,10 @@
         "action": "hijack-dns"
       },
       {
+        "action": "resolve",
+        "strategy": "ipv4_only"
+      },
+      {
         "ip_version": 6,
         "action": "reject"
       },
@@ -271,10 +275,6 @@
         ],
         "action": "route",
         "outbound": "direct"
-      },
-      {
-        "action": "resolve",
-        "strategy": "ipv4_only"
       }
     ],
     "final": "Proxy",

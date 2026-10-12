@@ -718,6 +718,39 @@ def audit_repo_rules(cfg, rep: Report):
             "服务端可能用 IPv6 出口（详见 docs/LESSONS.md L17）",
         )
 
+    # 6b) resolve 必须在第一个 route/reject/hijack-dns/bypass 之前（见 docs/LESSONS.md L18）
+    #     源码 route/route.go:670-705：只有 route / reject / hijack-dns / bypass 才 `break match`，
+    #     resolve 是「继续匹配」的中间动作。所以放在末尾的 resolve **只会作用于前面所有规则都没命中的流量**
+    #     （即最终落到 final 的那部分）。任何走 route(AI)/route(AD)/route(direct) 的连接
+    #     都带着域名发给代理服务端，服务端可以自己选 IPv6 —— 这正是「配了 ipv4_only 却仍看到 IPv6 出口」的原因。
+    if resolve_rules:
+        rules = route.get("rules", [])
+        # hijack-dns 本身也是终止动作，但它必须在 resolve 之前（DNS 流量先被劫持，无需解析）
+        blocking_actions = ("route", "reject", "bypass")
+        first_blocking = next(
+            (
+                i
+                for i, r in enumerate(rules)
+                if isinstance(r, dict)
+                and (
+                    str(r.get("action", "")) in blocking_actions
+                    # 只写条件的规则默认动作就是 route（route/rule/rule_default.go），也算终止动作
+                    or "action" not in r
+                )
+            ),
+            None,
+        )
+        first_resolve = resolve_rules[0][0]
+        if first_blocking is not None and first_resolve > first_blocking:
+            rep.error(
+                "resolve_not_first",
+                f"route.rules[{first_resolve}] 是 resolve，但它排在 route.rules[{first_blocking}] "
+                f"（{rules[first_blocking].get('action') or '条件规则默认 route'}）之后："
+                "首个 route/reject/hijack-dns/bypass 命中即 break match，后面的 resolve 永远不会执行，"
+                "命中 AI/AD/direct 的域名仍会被原样交给代理服务端解析（服务端可用 IPv6 出口）。"
+                "resolve 必须紧跟 hijack-dns，排在所有 route/reject 之前（详见 docs/LESSONS.md L18）",
+            )
+
 
 GROUP_TYPES = ("selector", "urltest", "block", "dns")
 # 分流组（骨架 tag 固定），任何一个配置文件都不得出现同名 tag 的重复语义
