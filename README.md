@@ -17,7 +17,7 @@
 3. 按 `docs/PROTOCOL-MAPPING.md` 把你的分享链接翻译成节点对象，追加进 `outbounds`。
 4. 把新节点的 `tag` 加进对应分流组的 `outbounds` 数组：
    - `Proxy` — 普通外网（**本身就是 urltest 自动测速组，加进去即完成**）
-   - `AI` — AI 类站点（默认跟随 `Proxy`）
+   - `AI` — AI 类站点（**同样是 urltest**，放你希望 AI 走的那几个节点）
    - `AD` — 广告拦截（**只能放 `block` / `direct`**）
 5. 导入客户端。
 
@@ -89,7 +89,7 @@ python tools/upgrade-check.py
 3. 已移除字段 = 致命
 4. **`check` 通过 ≠ 能启动**——`check` 只反序列化、不初始化。交付前必须 `audit.py --run` 真启动一次
 5. 平台能力不同，iOS/Android **没有** `strict_route`
-6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`
+6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`；`Proxy` 与 `AI` 都是 urltest，组内只放真实节点、不嵌套组
 7. **任何时候仓库都不放真实节点**——含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
 9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`

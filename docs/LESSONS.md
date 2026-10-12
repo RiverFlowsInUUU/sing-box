@@ -229,14 +229,25 @@ iOS / Android 客户端未实现的字段写了不一定报错，但真机上行
 
 **现象/风险**
 
-分流组骨架被改错（Proxy 不是 urltest、AI 不指向 Proxy、AD 被塞代理节点），
+分流组骨架被改错（Proxy 不是 urltest、AI 被改成 selector、AD 被塞代理节点），
+组里嵌组（`AI.outbounds` 里放 `Proxy`，两个 urltest 串联测速），
 或引用了不存在的 tag —— 这类错误 `check` 不会报，运行时才炸或静默失效。
+
+**背景（m02132 用户要求）**
+
+用户原话：「ai 分流组不要 proxy 作为子节点，直接就是 urltest +台湾节点」。
+原因：`AI` 若只是指向 `Proxy` 的 selector，它与 `Proxy` 完全同源，AI 组形同虚设；
+而 `urltest` 套 `urltest` 会串联两次测速（外层只拿到内层已选中的那一个节点）。
 
 **修法**
 
 骨架固定在 `templates/groups.json`；每个 profile 的出站必须与它一致，只往 `outbounds` 数组里加节点 tag。
+- `Proxy` 与 `AI` **都是 urltest**，各自在组内节点间独立优选；`AI` 只放用户指定给 AI 的节点（如全部台湾节点）。
+- `Proxy` / `AI` / `AD` 的 `outbounds` 里**只允许出现真实节点 tag**，不得引用其它组。
+- 骨架模板 `templates/groups.json` 里 `Proxy` / `AI` 的 `outbounds` 允许为空（占位），
+  自行生成的 profile 里为空则报 WARN `empty_group_skeleton`。
 
-**门禁**：`dup_tag`, `empty_group`, `urltest_no_url`, `final_missing`, `dangling_ref`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_default`, `template_ad_polluted`
+**门禁**：`dup_tag`, `empty_group`, `empty_group_skeleton`, `urltest_no_url`, `final_missing`, `dangling_ref`, `group_wrong_type`, `group_nesting`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_not_urltest`, `template_ai_no_url`, `template_ad_polluted`
 
 ---
 

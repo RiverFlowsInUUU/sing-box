@@ -75,7 +75,7 @@
   "grouping": {
     "_comment": "节点的 tag 要加进哪个数组，由用户指定。以下是本仓库的固定分组语义。",
     "Proxy": "普通外网 + 全局兜底（route.final 指向它）。它本身就是 urltest 自动测速组，节点加进它就等于加进测速",
-    "AI": "AI 相关站点（geosite-ai 命中后走它），默认指向 Proxy，即跟随优选",
+    "AI": "AI 相关站点（geosite-ai 命中后走它）。它本身就是 urltest，把 AI 要用的节点放进来即可，不引用 Proxy",
     "AD": "广告拦截，数组里只能是 block / direct，禁止放代理节点",
     "direct": "直连",
     "block": "拒绝"

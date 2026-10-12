@@ -219,17 +219,19 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 
 ## 3. 插入分流组（用户指定落点）
 
-三个组位置固定，**`Proxy` 本身就是 urltest**（不再有单独的 `Auto` 组）：
+三个组位置固定，**`Proxy` 与 `AI` 都是 urltest**（不再有单独的 `Auto` 组）：
 
 ```jsonc
 { "type": "urltest", "tag": "Proxy", "outbounds": ["Node-01", "..."],
   "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
-{ "type": "selector", "tag": "AI",  "outbounds": ["Proxy", "Node-01", "..."], "default": "Proxy" }
-{ "type": "selector", "tag": "AD",  "outbounds": ["block", "direct"],        "default": "block" }
+{ "type": "urltest", "tag": "AI",    "outbounds": ["Node-01", "Node-04"],
+  "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
+{ "type": "selector", "tag": "AD",   "outbounds": ["block", "direct"], "default": "block" }
 ```
 
 - 用户说"放 Proxy" → 把新节点 tag 加进 `Proxy.outbounds`。`Proxy` 是 urltest，加进去就等于加进自动测速。
-- 用户说"放 AI" → 加进 `AI.outbounds`；`AI` 默认指向 `Proxy`，所以不指定也可以直接跟随优选。
+- 用户说"放 AI" → 加进 `AI.outbounds`。`AI` 也是 urltest，只放用户想给 AI 用的节点（例如全部台湾节点）；
+  **不要把 `Proxy` 放进 `AI.outbounds`** —— urltest 里嵌 urltest 会串联两次测速，两个组结果几乎一样，AI 组就失去意义。
 - **AD 组只放 `block` / `direct`，永远不把代理节点放进 AD。**
 - tag 一旦被规则集/规则引用就不能随便改名：`Proxy` `AI` `AD` `direct` `block` 是保留名。
 - `route.final` 固定指向 `Proxy`，即全局兜底走 urltest 优选。

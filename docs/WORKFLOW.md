@@ -98,7 +98,8 @@ docs/LESSONS.md            事故台账（每条教训 → 对应门禁 code，�
 1. **节点分享链接**（可多个）：`vless://…` `vmess://…` `trojan://…` `hysteria2://…` `ss://…` …
 2. **落点分流组**：`Proxy`（普通外网）、`AI`（AI 类网站走更干净的出口）、`AD`（广告拦截）
 3. **目标平台**：Android / iOS / Windows
-4. （可选）**AI 组是否要单独指定节点**（默认跟随 `Proxy` 这个 urltest 优选）
+4. **AI 组要放哪些节点**（`AI` 与 `Proxy` 是两个独立的 urltest 组，各自在组内节点间优选；
+   用户不说就先把所有代理节点都放进去，**不要**用 `Proxy` 当子节点）
 
 缺哪个就问，不要自己猜。用户只说"A 放 AI 组"，那就只动 AI 组。
 
@@ -131,8 +132,8 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 1. 在 `outbounds[]` 末尾追加节点对象，`tag` 用「节点名-地区-协议」这种可读名，
    且**不得与既有 tag 重复**（`Proxy` `AI` `AD` `direct` `block` 是保留名；`Proxy` 是 urltest 组，节点更不能占用）。
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
-   `Proxy` 本身就是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
-   `AI` 默认指向 `Proxy`，用户没特别要求就不用单独加节点。
+   `Proxy` 与 `AI` 都是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
+   两个组的 `outbounds` 里**只放真实节点，不要放 `Proxy` / `AI` 这类组 tag**（不嵌套）。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
    其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
    `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
@@ -369,3 +370,4 @@ else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 | "规则顺序无所谓" | 顺序错了等于没加。`geosite-cn` 排在拦截之前，国内广告域名会先命中直连，广告规则再无机会执行 |
 | "`cache_file.path` 可以写 `../cache/cache.db`" | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL` 起不来。写 `cache.db` |
 | "分流组越多越好" | 本仓库只要 `Proxy` / `AI` / `AD` 三个 + `direct` / `block` |
+| "让 AI 组指向 Proxy 省事" | 两个 urltest 串联后测速会互相拖累，且 AI 组失去独立优选意义；组的 `outbounds` 只放真实节点 |

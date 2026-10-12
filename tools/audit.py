@@ -562,9 +562,38 @@ def audit_repo_rules(cfg, rep: Report):
                     "（sing-box check 不校验这个）",
                 )
             if not refs:
-                rep.error("empty_group", f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空")
+                if o.get("tag") in NO_NESTING_GROUPS:
+                    rep.warn(
+                        "empty_group_skeleton",
+                        f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空：骨架模板允许，"
+                        "真正生成的配置必须把节点加进去",
+                    )
+                else:
+                    rep.error("empty_group", f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空")
         if o.get("type") == "urltest" and not o.get("url"):
             rep.error("urltest_no_url", f"outbounds[{i}] ({o.get('tag')}) 是 urltest 但没有 url")
+
+    # 3a) 组的类型与嵌套：Proxy / AI 必须是 urltest，AD 必须是 selector；组的 outbounds 里只放真实节点
+    for i, o in enumerate(outs):
+        if not isinstance(o, dict):
+            continue
+        want = GROUP_TYPES_REQUIRED.get(o.get("tag"))
+        if want and o.get("type") != want:
+            rep.error(
+                "group_wrong_type",
+                f"outbounds[{i}] ({o.get('tag')}) 必须是 {want}（当前 {o.get('type')}）："
+                "Proxy 与 AI 是两个独立优选组、各自 urltest；AD 是 selector",
+            )
+        if o.get("tag") not in NO_NESTING_GROUPS:
+            continue
+        nested = [r for r in (o.get("outbounds") or []) if r in GROUP_TAGS]
+        if nested:
+            rep.error(
+                "group_nesting",
+                f"outbounds[{i}] ({o.get('tag')}) 引用了其它分流组 {nested}："
+                "组的 outbounds 里只允许放真实节点，嵌套 urltest 会串联两次测速"
+                "（m02132 用户要求 AI 直接是 urltest + 台湾节点，不要 Proxy 作子节点）",
+            )
 
     final = route.get("final")
     if final and final not in tagset:
@@ -639,6 +668,12 @@ def audit_repo_rules(cfg, rep: Report):
 
 
 GROUP_TYPES = ("selector", "urltest", "block", "dns")
+# 分流组（骨架 tag 固定），任何一个配置文件都不得出现同名 tag 的重复语义
+GROUP_TAGS = ("Proxy", "AI", "AD")
+# 组的 outbounds 里只允许出现真实节点，不允许嵌套组（urltest 套 urltest 会串联两次测速）
+NO_NESTING_GROUPS = GROUP_TAGS
+# 固定组的类型不允许被改（m02132：AI 与 Proxy 一样是 urltest，不再是指向 Proxy 的 selector）
+GROUP_TYPES_REQUIRED = {"Proxy": "urltest", "AI": "urltest", "AD": "selector"}
 
 
 def audit_loopback_guard(cfg, rep: Report):
@@ -716,8 +751,13 @@ def audit_template(rep: Report):
     if proxy and not proxy.get("url"):
         rep.error("template_proxy_no_url", "Proxy (urltest) 必须有 url，否则节点测速无意义")
     ai = by_tag.get("AI")
-    if ai and ai.get("default") != "Proxy":
-        rep.warn("template_ai_default", "AI 的 default 建议指向 Proxy（跟随即全局优选）")
+    if ai and ai.get("type") != "urltest":
+        rep.error(
+            "template_ai_not_urltest",
+            f"AI 必须是 urltest（当前 {ai.get('type')}）——它与 Proxy 是两个独立的优选组",
+        )
+    if ai and not ai.get("url"):
+        rep.error("template_ai_no_url", "AI (urltest) 必须有 url，否则节点测速无意义")
     ad = by_tag.get("AD")
     if ad and set(ad.get("outbounds") or []) - {"block", "direct"}:
         rep.error("template_ad_polluted", "AD 只允许 block / direct")
@@ -858,6 +898,7 @@ def _free_port():
 LESSON_FRAMEWORK_CODES = {
     "json",
     "no_singbox",
+    "skip_check_template",
     "run_skipped",
     "singbox_check",
     "singbox_run",
@@ -998,23 +1039,19 @@ def main():
     failed = False
     lessons_rep = Report("docs/LESSONS.md")
     audit_lessons(lessons_rep)
-    if lessons_rep.items:
+    if lessons_rep.items and not args.json:
         for lv, code, msg in lessons_rep.items:
             print(f"[{lv[0]}] docs/LESSONS.md: {msg}")
     if not lessons_rep.ok():
         failed = True
+
     if args.files:
+        # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
+        # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
         targets = [Path(f) for f in args.files]
     else:
-        targets = sorted(PROFILES.rglob("*.json"))
-        template_rep = Report("templates/groups.json")
-        audit_template(template_rep)
-        if template_rep.items:
-            for lv, code, msg in template_rep.items:
-                print(f"[{lv[0]}] templates/groups.json: {msg}")
-        if not template_rep.ok():
-            failed = True
-    
+        targets = sorted(PROFILES.rglob("*.json")) + [ROOT / "templates" / "groups.json"]
+
     if not targets:
         print("没有找到任何配置文件", file=sys.stderr)
         return 2
@@ -1028,6 +1065,8 @@ def main():
             failed = True
             continue
         platforms = {args.platform} if args.platform else infer_platform(t.name)
+        # 骨架模板不是可运行配置，跳过 check / run
+        is_template = t.resolve() == (ROOT / "templates" / "groups.json").resolve()
         rep = Report(str(t))
         try:
             cfg = json.loads(t.read_text(encoding="utf-8"))
@@ -1041,10 +1080,14 @@ def main():
         audit_platform_caps(cfg, rep, platforms)
         audit_repo_rules(cfg, rep)
         audit_loopback_guard(cfg, rep)
-        if binary:
+        if is_template:
+            audit_template(rep)
+        if binary and not is_template:
             run_singbox_check(binary, t, rep)
             if args.run:
                 run_singbox_run(binary, t, rep, args.run_seconds)
+        elif is_template:
+            rep.info("skip_check_template", "templates/groups.json 是骨架模板，不是可运行配置，跳过 check / run")
         else:
             rep.info("no_singbox", "未指定 sing-box 可执行文件，已跳过 sing-box check")
 
@@ -1053,6 +1096,7 @@ def main():
             failed = True
 
     if args.json:
+        all_results = [(lessons_rep, {"matrix"})] + results
         print(
             json.dumps(
                 [
@@ -1065,7 +1109,7 @@ def main():
                             {"level": lv, "code": c, "message": m} for lv, c, m in r.items
                         ],
                     }
-                    for r, p in results
+                    for r, p in all_results
                 ],
                 ensure_ascii=False,
                 indent=2,

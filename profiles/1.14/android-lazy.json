@@ -167,17 +167,18 @@
       "tolerance": 100
     },
     {
-      "type": "selector",
+      "type": "urltest",
       "tag": "AI",
       "outbounds": [
-        "Proxy",
         "Node-01",
         "Node-02",
         "Node-03",
         "Node-04",
         "Node-05"
       ],
-      "default": "Proxy"
+      "url": "http://www.gstatic.com/generate_204",
+      "interval": "3m",
+      "tolerance": 100
     },
     {
       "type": "selector",
