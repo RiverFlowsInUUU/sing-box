@@ -62,8 +62,10 @@ sing-box 迭代快，字段会改名、合并、废弃、移除。而现有工�
 | 未知字段 | ✅ 会 `FATAL` | `sing-box check` |
 | 已移除字段 | ✅ 会 `FATAL` | `sing-box check` + 矩阵表 |
 | **已废弃未移除** | ❌ **完全静默**（典型：`download_detour`） | `version-matrix.json` + `audit.py` |
-| **平台能力差异** | ❌ **完全不校验**（iOS 写 `strict_route` 也 exit=0） | `PLATFORM-MATRIX.md` + `audit.py` || **引用完整性** | ❌ 出站/规则集/DNS server 写错也不报 | `audit.py` |
+| **平台能力差异** | ❌ **完全不校验**（iOS 写 `strict_route` 也 exit=0） | `PLATFORM-MATRIX.md` + `audit.py` |
+| **引用完整性** | ❌ 出站/规则集/DNS server 写错也不报 | `audit.py` |
 | **新增能力没决策** | ❌ **完全不知道多了什么**（1.15 的 MASQUE / Tailcat / sing-tun 栈） | `upgrade-check.py` 第 5 节 + `version-matrix.json` 的 `kind=new` + `DECISIONS.md` |
+| **真实节点地址泄到公开仓库** | ❌ **完全不校验**（写在 `docs/` 散文里也一样） | `audit.py` 的 `sensitive_ip_in_repo`（扫全部被跟踪文件） |
 
 ## 门禁命令
 
@@ -91,7 +93,7 @@ python tools/upgrade-check.py
 4. **`check` 通过 ≠ 能启动**——`check` 只反序列化、不初始化。交付前必须 `audit.py --run` 真启动一次
 5. 平台能力不同，iOS/Android **没有** `strict_route`
 6. 分流组只有 `Proxy` / `AI` / `AD` + `direct` / `block`；`Proxy` 与 `AI` 都是 urltest，组内只放真实节点、不嵌套组
-7. **任何时候仓库都不放真实节点**——含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送
+7. **任何时候、任何文件都不放真实节点**——范围是**整个被跟踪仓库**（不只是 `profiles/`，`docs/` 的散文同样公开）；含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送。`audit.py` 有 `placeholder_server` + `sensitive_ip_in_repo` 兜底
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
 9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`
 10. 旧版本配置只归档不删除

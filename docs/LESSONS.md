@@ -755,6 +755,52 @@ outbound connection to 160.79.104.10:443      ← hy2 出站拿到的是 IPv4 �
 
 ---
 
+## L23 防泄漏：证据文档写了“实测”，把用户服务器的真实地址一起公开了
+
+**现象**：为了解释「IPv6 出口从哪来」，我在 `docs/evidence/` 新建了一份证据文档，
+写入了节点域名与它的两条 DNS 记录（A 与 AAAA），并推到了公开仓库。
+**所有门禁都通过了** —— 包括专管泄漏的 `placeholder_server`。
+
+**根因**：当时唯一防泄漏的门禁是 `placeholder_server`，它只做一件事：
+
+```python
+# tools/audit.py:424-437（修改前）
+if rel.parts and rel.parts[0] == "profiles":          # ← 只管 profiles/ 目录
+    for i, ob in enumerate(cfg.get("outbounds", [])):  # ← 且只看 JSON 的 server 字段
+        ...
+        if not srv.endswith(PLACEHOLDER_DOMAINS):
+            rep.error("placeholder_server", ...)
+```
+
+即：**它审的是“字段”，范围是 `profiles/`**。而这次泄漏出现在 `docs/*.md` 的**散文里**，
+既不是 JSON 也不在 `profiles/`。所有门禁都是“按字段”审的 ⇒ 看不见。
+
+**为什么没被拦住**：
+1. 铁律 7 的措辞是「仓库里不放**真实节点**」，而**节点的 IP 不在任何配置字段里**（只在证据叙述里）——
+   字面上不归任何门禁管。
+2. 修改前的 force-push 只重置分支指针，**不会立刻删除旧对象**；旧 commit 仍可按 SHA 直取。
+3. 当时仍存在思路盲区：“这是实测数据、是证据、不写就不严谨” ——
+   但**证据的严谨性不需要真实地址**（只需“两者相等”这个关系，见 `docs/evidence/` 里的 🔒 说明）。
+
+**修法**：
+- 内容：节点域名 → `<节点域名>`，节点出口 IP → RFC 5737/3849 文档地址（`203.0.113.7` / `2001:db8::a`）。
+  **目标站 IP（如 `160.79.104.10`）与公共 DNS 保留** —— 它们不是我们的基础设施，不构成泄漏。
+- 门禁（新建 `audit_redaction()`）：按 `git ls-files` 扫**全部被跟踪文件**，
+  招出任何 **2000::/3 或非私有段**的公网 IP；豁免 RFC 私有/回环/文档专用/组播段
+  与 `PUBLIC_IP_WHITELIST`（人工审阅过的公共 DNS 与目标站地址）。`local/` 跳过。
+- 实例正则尾部需排除 `/`，否则 CIDR（`2000::/3`）会被当作地址误报；需把 `_IP6_SCAN_NET` 设成
+  `2000::/3`（真实节点地址只会落在这里），否则上游文档里的 IETF 保留段示例（如 `8000::/1`）会误报。
+
+**同类教训**：**门禁的作用域必须与铁律的作用域一致**。铁律 7 说的是“仓库”，
+门禁却只查了 `profiles/` 的一个字段 —— 这就是缺口。加门禁时要回头对一遍：
+这条铁律到底覆盖哪些文件、哪些载体（字段？散文？提交信息？），漏一个就是一个缺口。
+
+**门禁**：`sensitive_ip_in_repo`、`redaction_clean`
+
+**涉及**：`tools/audit.py`、`docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md`、`AGENTS.md`（铁律 7、11）
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

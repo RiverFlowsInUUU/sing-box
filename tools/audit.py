@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1283,12 +1284,131 @@ def audit_decisions(rep: Report, matrix, target_version: str):
         )
     if not rep.ok():
         return  # 已有 ERROR 时不再报「一致」，避免在失败输出里混一条安慰信息
-    if not sections:
-        rep.info("decisions_ok", "docs/DECISIONS.md 尚无 D 条目（新功能台账为空时才允许）")
-    elif news:
+    if not news:
+        rep.info(
+            "decisions_ok",
+            "矩阵里没有 kind=new 条目，无需决策记录"
+            + (f"（本文件已有 {len(sections)} 条历史 D 条目）" if sections else ""),
+        )
+    else:
         rep.info(
             "decisions_ok",
             f"docs/DECISIONS.md 与矩阵双向一致：{len(news)} 条 kind=new 均有 D 条目收录",
+        )
+
+
+# ---------------------------------------------------------------- 防泄漏
+
+# 有意保留在仓库里的公网 IP：全部人工审阅过，分三类 ——
+#   1) 公共 DNS（配置里本来就要写）
+#   2) 实测证据引用的目标站 / CDN 地址（不是我们的基础设施）
+#   3) 上游文档里的示例
+# 除此以外任何公网 IP 出现在被跟踪文件里 → ERROR（AGENTS.md 铁律 7）。
+PUBLIC_IP_WHITELIST = {
+    # 1) 公共 DNS
+    "1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112",
+    "208.67.222.222", "208.67.220.220", "223.5.5.5", "223.6.6.6", "119.29.29.29",
+    "114.114.114.114", "114.114.115.115", "180.76.76.76", "1.2.4.8", "210.2.4.8",
+    "120.53.53.53", "1.12.12.12", "94.140.14.14", "76.76.2.0",
+    # 2) 实测证据里的目标站 / CDN
+    "160.79.104.10",    # claude.ai
+    "34.160.111.145",   # ifconfig.me
+    "172.67.75.172", "104.26.12.31", "104.26.13.31",  # ip.sb (Cloudflare)
+    "104.16.132.249",   # cloudflare-dns.com（archive/ 里的 DoH 服务器）
+    "162.159.141.147", "142.250.198.40", "142.250.198.0", "142.251.210.142",
+    "172.217.112.4",    # Google 广告段（LESSONS L16 的拦截示例）
+    "121.14.77.221",    # www.qq.com（LESSONS L18 的直连示例）
+    # 3) 上游文档示例
+    "128.0.0.0",
+}
+
+# 永不参与 IP 扫描的范围：RFC 私有 / 回环 / 链路本地 / 组播 / 保留 / 文档专用
+_IP_EXEMPT_NETS = [
+    ip_network(x)
+    for x in (
+        "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
+        "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16",
+        "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+    )
+]
+
+# IPv6 侧只扫「全球单播 2000::/3」—— 真实节点地址只可能落在这里。
+# 其余（8000::/1、4000::/3、6000::/3 等）都是 IETF 保留段；上游文档里的示例
+# （如 migration.md 的 8000::/1 路由切换演示）用它们，不扫就不会误报。
+_IP6_SCAN_NET = ip_network("2000::/3")
+
+_IP_TOKEN = re.compile(
+    # 尾部排除 `/`：CIDR（如 2000::/3、172.19.0.1/30）是路由表/网段声明，不是单主机地址，不参与扫查
+    r"(?<![\w.:/])((?:\d{1,3}\.){3}\d{1,3}|(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4})(?![\w.:/])"
+)
+
+
+def audit_redaction(rep: Report):
+    """防泄漏扫查：被跟踪文件里不许出现「未被审阅过」的公网 IP。
+
+    这个门禁的由来是一次真实事故：L18 的证据文档写了 “实测” 二字，
+    却把节点域名与它的 A/AAAA 记录（也就是用户服务器的真实地址）一起写进了公开仓库。
+    当时所有门禁都通过了 —— 因为它们是按“字段”审的，而 IP 是写在散文里的。
+
+    范围：`git ls-files` 的全部文件（含 docs/）。`local/` 不跟踪、按规定就允许放真实节点，故跳过。
+    豁免：- RFC 私有 / 回环 / 文档专用 / 组播 等范围
+          - PUBLIC_IP_WHITELIST 里人工审阅过的公网 IP
+    """
+    try:
+        out = subprocess.run(
+            ["git", "ls-files"], cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20,
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as ex:
+        rep.info("skip_check_template", f"无法取得 git 文件列表，跳过防泄漏扫查：{ex}")
+        return
+    files = [f for f in out.splitlines() if f.strip()]
+    if not files:
+        rep.info("skip_check_template", "git 未跟踪任何文件，跳过防泄漏扫查（可能不是 git 工作区）")
+        return
+
+    hits = {}
+    for f in files:
+        if f.startswith("local/"):
+            continue  # 铁律 7：local/ 不跟踪，允许放真实节点
+        p = ROOT / f
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for m in _IP_TOKEN.finditer(line):
+                raw = m.group(1)
+                try:
+                    addr = ip_address(raw)
+                except ValueError:
+                    continue
+                if str(addr) in PUBLIC_IP_WHITELIST or raw in PUBLIC_IP_WHITELIST:
+                    continue
+                if addr.version == 6:
+                    # 只看全球单播；其余保留段（::1 / fc00::/7 / fe80::/10 / 8000::/1）跳过
+                    if addr not in _IP6_SCAN_NET or addr in ip_network("2001:db8::/32"):
+                        continue
+                elif any(addr in net for net in _IP_EXEMPT_NETS):
+                    continue
+                hits.setdefault(str(addr), []).append(f"{f}:{lineno}")
+
+    if not hits:
+        rep.info(
+            "redaction_clean",
+            f"防泄漏扫查通过：{len(files)} 个被跟踪文件中没有未审阅的公网 IP",
+        )
+        return
+    for ip, locs in sorted(hits.items(), key=lambda kv: -len(kv[1])):
+        rep.error(
+            "sensitive_ip_in_repo",
+            f"公网 IP {ip} 出现在被跟踪文件 {locs[0]}"
+            + (f"（另有 {len(locs) - 1} 处）" if len(locs) > 1 else "")
+            + "。仓库里不许出现未审阅的公网 IP（可能是真实节点地址）——"
+            "请改成 RFC 5737/3849 文档地址（如 203.0.113.7 / 2001:db8::a）；"
+            "确属公共 DNS 或目标站地址的，加入 tools/audit.py 的 PUBLIC_IP_WHITELIST",
         )
 
 
@@ -1383,6 +1503,15 @@ def main():
     if not decisions_rep.ok():
         failed = True
 
+    # 防泄漏扫查（同上，与具体配置无关）：被跟踪文件里不许有未审阅的公网 IP
+    redact_rep = Report("仓库防泄漏扫查（git ls-files）")
+    audit_redaction(redact_rep)
+    if redact_rep.items and not args.json:
+        for lv, code, msg in redact_rep.items:
+            print(f"[{lv[0]}] {msg}")
+    if not redact_rep.ok():
+        failed = True
+
     if args.files:
         # 显式传了文件就只查这些；仓库自检（无参数）时连带把 templates/groups.json
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
@@ -1433,12 +1562,14 @@ def main():
         if not rep.ok():
             failed = True
 
+    ledger_results = [
+        (lessons_rep, {"matrix"}),
+        (newfeat_rep, {"new-features"}),
+        (decisions_rep, {"decisions"}),
+        (redact_rep, {"redaction"}),
+    ]
     if args.json:
-        all_results = [
-            (lessons_rep, {"matrix"}),
-            (newfeat_rep, {"new-features"}),
-            (decisions_rep, {"decisions"}),
-        ] + results
+        all_results = ledger_results + results
         print(
             json.dumps(
                 [
@@ -1458,6 +1589,11 @@ def main():
             )
         )
     else:
+        # 台账/扫查的逐条输出已在各自跑完时打过；这里只补两行小结，避免重复
+        for r, p in ledger_results:
+            n_err, n_warn = len(r.errors), len(r.warns)
+            status = "PASS" if r.ok() else "FAIL"
+            print(f"  → {r.name}  [{status}]  {n_err} ERROR / {n_warn} WARN")
         for r, p in results:
             status = "PASS" if r.ok() else "FAIL"
             print(f"\n=== {r.name}  [{status}]  目标版本 {version}  平台 {'/'.join(sorted(p))}")
@@ -1466,9 +1602,13 @@ def main():
                 print(f"  {mark} {m}")
             if r.ok() and not r.warns:
                 print("  · 无问题")
-        total_err = sum(len(r.errors) for r, _ in results)
-        total_warn = sum(len(r.warns) for r, _ in results)
-        print(f"\n合计：{len(results)} 个文件，{total_err} ERROR，{total_warn} WARN")
+        all_results = ledger_results + results
+        total_err = sum(len(r.errors) for r, _ in all_results)
+        total_warn = sum(len(r.warns) for r, _ in all_results)
+        print(
+            f"\n合计：{len(results)} 个配置文件 + {len(ledger_results)} 份台账/扫查，"
+            f"{total_err} ERROR，{total_warn} WARN"
+        )
 
     return 1 if failed else 0
 

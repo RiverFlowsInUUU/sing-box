@@ -55,7 +55,7 @@ EOF
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
-| 7 | **任何时候仓库都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。`audit.py` 有 `placeholder_server` 检查兜底 |
+| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录） |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
@@ -235,7 +235,7 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ## 4. 校验命令
 
 ```bash
-# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + sing-box check
+# 八项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义 / IPv4-only 端到端 / 新功能采纳）+ 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查 + sing-box check
 # audit.py 自己找 sing-box；找不到可用 --singbox 或环境变量 SINGBOX_BIN 指定
 # 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上，
 # 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
