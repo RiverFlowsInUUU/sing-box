@@ -1454,6 +1454,9 @@ PUBLIC_IP_WHITELIST = {
     "208.67.222.222", "208.67.220.220", "223.5.5.5", "223.6.6.6", "119.29.29.29",
     "114.114.114.114", "114.114.115.115", "180.76.76.76", "1.2.4.8", "210.2.4.8",
     "120.53.53.53", "1.12.12.12", "94.140.14.14", "76.76.2.0",
+    # geoip-cn 归属实测用到的两个大陆 DNS（LESSONS L28 / D13 的前置论证）
+    "117.50.10.10",     # 下一代互联网国家工程中心公共 DNS
+    "180.184.1.1",      # 字节跳动公共 DNS
     # 2) 实测证据里的目标站 / CDN
     "160.79.104.10",    # claude.ai
     "34.160.111.145",   # ifconfig.me
@@ -1606,7 +1609,9 @@ def audit_redaction(rep: Report):
     却把节点域名与它的 A/AAAA 记录（也就是用户服务器的真实地址）一起写进了公开仓库。
     当时所有门禁都通过了 —— 因为它们是按“字段”审的，而 IP 是写在散文里的。
 
-    范围：`git ls-files` 的全部文件（含 docs/）+ commit message。
+    范围：`git ls-files` 的全部文件（含 docs/）+ **尚未 add 的新文件** + commit message。
+    第二项是必须的：`git ls-files` 只看已跟踪文件，所以“刚写好、还没 `git add`”的新文档
+    完全在盲区里 —— 本地跑 audit 是绿的，推送后 CI 第一次扫到它就红。这个坑真实发生过（L29）。
     commit message 也算“写进仓库的文本” —— 它同样公开、同样推不回来。
     但 commit message 只扫 LEAK_SCAN_START_DATE 之后的：历史里已知有泄漏，
     而“把要拦的 SHA 写进仓库”会重新泄漏一次（见该常量的说明）。
@@ -1614,15 +1619,24 @@ def audit_redaction(rep: Report):
     豁免：- RFC 私有 / 回环 / 文档专用 / 组播 等范围
           - PUBLIC_IP_WHITELIST 里人工审阅过的公网 IP
     """
-    try:
-        out = subprocess.run(
-            ["git", "ls-files"], cwd=str(ROOT), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=20,
-        ).stdout
-    except (OSError, subprocess.SubprocessError) as ex:
-        rep.info("skip_check_template", f"无法取得 git 文件列表，跳过防泄漏扫查：{ex}")
-        return
-    files = [f for f in out.splitlines() if f.strip()]
+    # 已跟踪 + 未跟踪但未被 ignore 的：后者覆盖“刚写好、还没 git add”的新文件。
+    # 只看 ls-files 会漏掉它们 —— 本地绿、CI 红，正是 L29 的成因。
+    files = []
+    seen = set()
+    for args in (["git", "ls-files"],
+                 ["git", "ls-files", "--others", "--exclude-standard"]):
+        try:
+            out = subprocess.run(
+                args, cwd=str(ROOT), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=20,
+            ).stdout
+        except (OSError, subprocess.SubprocessError) as ex:
+            rep.info("skip_check_template", f"无法取得 git 文件列表（{' '.join(args)}），跳过防泄漏扫查：{ex}")
+            return
+        for f in out.splitlines():
+            if f.strip() and f not in seen:
+                seen.add(f)
+                files.append(f)
     if not files:
         rep.info("skip_check_template", "git 未跟踪任何文件，跳过防泄漏扫查（可能不是 git 工作区）")
         return

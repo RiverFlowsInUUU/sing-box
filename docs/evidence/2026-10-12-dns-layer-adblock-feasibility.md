@@ -111,10 +111,10 @@ Android 的源码机制（两处闸门）：
 | 域名 | 预期 | 实测 |
 |---|---|---|
 | `adservice.google.com`（在 jinx-ads） | 拦截 | ✅ `dns: lookup failed for adservice.google.com: NXDOMAIN` |
-| `gm.mmstat.com`（白名单，被 `mmstat.com` 覆盖） | 放行 | ✅ `lookup succeed ... 58.221.74.12` |
-| `zlink.ugsdk.cn`（白名单，被 `ugsdk.cn` 覆盖） | 放行 | ✅ `lookup succeed ... 183.3.204.62 ...` |
-| `www.gstatic.com`（不在任何广告集，不在白名单） | 正常 | ✅ `lookup succeed ... 142.251.215.195`（走 dns-proxy） |
-| `anthropic.com`（不在任何广告集） | 正常 | ✅ `lookup succeed ... 160.79.104.10` |
+| `gm.mmstat.com`（白名单，被 `mmstat.com` 覆盖） | 放行 | ✅ `lookup succeed`（返回该域名的正常 A 记录） |
+| `zlink.ugsdk.cn`（白名单，被 `ugsdk.cn` 覆盖） | 放行 | ✅ `lookup succeed`（返回该域名的正常 A 记录，16 条） |
+| `www.gstatic.com`（不在任何广告集，不在白名单） | 正常 | ✅ `lookup succeed`（返回该域名的正常 A 记录）（走 dns-proxy） |
+| `anthropic.com`（不在任何广告集） | 正常 | ✅ `lookup succeed`（返回该域名的正常 A 记录） |
 
 ⇒ 白名单放行 + 拦截生效 + 正常域名不受影响，三项全过。
 

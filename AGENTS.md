@@ -41,7 +41,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
 | 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
-| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + commit message**（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态（2026-10-12 重建仓库后）**：旧对象已随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。上面那句「仍可按 SHA 直取」是**重建前**的事实，保留它是为了说明“force-push 本身不够”——**不要**据此以为当前仓库里还躺着一个可取到的旧对象。 |
+| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + 尚未 add 的新文件 + commit message**（`git ls-files` 与 `git ls-files --others --exclude-standard` 合并 —— 只看前者会漏掉新写的文档，本地绿、CI 红，见 L29）（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态（2026-10-12 重建仓库后）**：旧对象已随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。上面那句「仍可按 SHA 直取」是**重建前**的事实，保留它是为了说明“force-push 本身不够”——**不要**据此以为当前仓库里还躺着一个可取到的旧对象。 |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |<br>**可选加固：DNS 层前置拦截**。`dns.rules` 里插两条（`jinx-direct` → `route` `dns-cn`、`jinx-ads`+`awanue-ads` → `predefined` `rcode: NXDOMAIN`），两条都必须排在 `geosite-cn` **之前**。**`dns.rules` 与 `route.rules` 是两份独立的顺序表**，改一处必须改另一处，否则静默失效（L28）。拦截动作只能用 `predefined`/`reject`，**写成 `route` 等于没拦**。**route 层规则不能删**：应用自带 DoH/DoT 只有 route 层拦得住。详见 `docs/evidence/2026-10-12-dns-layer-adblock-feasibility.md` 与 `docs/DECISIONS.md` D13 |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
@@ -241,7 +241,9 @@ sing-box check -c profiles/1.14/ios-lazy.json
 
 # ★ 交付 / 排错前必跑：真启动一次，抓 check 看不见的启动期 FATAL
 #   （会自动把 tun 入站临时换成 mixed、cache_file 指到临时目录；会真的连网拉规则集）
-python tools/audit.py --run --run-seconds 20
+#   ⚠️ 必须先 git add -A 再跑 —— CI 是 checkout 之后跑的，而防泄漏扫查要看文件名单，
+#      不先 add 就会「本地绿、CI 红」（L29 / D14）
+git add -A && python tools/audit.py --run --run-seconds 20
 
 # 上游巡检 / 重新生成人读版矩阵
 python tools/upgrade-check.py

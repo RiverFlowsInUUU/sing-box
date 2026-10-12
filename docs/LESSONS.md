@@ -1191,6 +1191,49 @@ L10/L12/L13 连 `**修法**` 都没有（只有 `**门禁**`）。
 
 ---
 
+## L29 防泄漏门禁只扫「已跟踪文件」—— 新文档本地全绿、CI 一推就红
+
+**现象**
+
+`docs/evidence/` 下新写的证据文档里带了几个实测 IP，本地 `python tools/audit.py` 全绿，
+`git push` 之后 CI 立刻报 5 个 ERROR（`sensitive_ip_in_repo`，指向那个新文件的
+第 55 / 114 / 115 / 116 行）。同一个仓库、同一份门禁代码，结论却相反。
+
+**根因**
+
+`audit_redaction()` 的文件名单来自 `git ls-files` —— 它只列**已跟踪**文件。
+新写的文档在第一次 `git add` 之前根本不在这个名单里，
+所以我本地跑（当时是跑在 `git add -A` 之前）时它完全不被扫；
+而 CI 是 checkout 已提交内容之后跑的，文件必然已跟踪，于是被扫出来。
+⇒ 门禁代码相同，**输入集合不同**，结论自然不同。
+
+**为什么没被拦住**
+
+这不是「用错门禁」，是**门禁自身的设计缺陷**：
+`audit_redaction()` 想表达的是「仓库里不许有未审阅的公网 IP」，
+而 `git ls-files` 回答的是「仓库里**现在已有**什么」——
+「仓库里**即将有**什么」它天生看不见。
+我跑验证的时机（先 audit、后 `git add`）只是把缺陷暴露出来；
+就算我当时顺序对了，**把正确性寄托在「记得先 add」上，等于没有门禁**。
+
+**修法**
+
+`audit_redaction()` 的文件名单改为两个来源合并去重：
+
+```
+git ls-files                              # 已跟踪
+git ls-files --others --exclude-standard  # 未跟踪、且未被 .gitignore 忽略 = 即将提交的新文件
+```
+
+`local/` 仍在 `startswith("local/")` 处跳过（它被 `.gitignore` 忽略，本就不在名单里）。
+推论：**交付前跑 audit 必须与 CI 同条件** —— 先 `git add -A`，再 audit。
+
+**门禁**：`sensitive_ip_in_repo`, `redaction_clean`
+
+**涉及**：`tools/audit.py`、`docs/evidence/`、`.gitignore`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。
