@@ -488,7 +488,32 @@ $ grep "outbound connection to" real-A.log
 outbound connection to 160.79.104.10:443      ← hy2 出站拿到的是 IPv4 字面量
 ```
 
-即：VPS 端收到的目标就是 `160.79.104.10`，没有 IPv6 可选项，**服务端不可能再选 IPv6**。
+即：**第一段（本地 → 服务端）已被证实锁定在 IPv4**：hy2 出站拿到的是 IPv4 字面量。
+
+**同一配置下仍出现 IPv6 出口的实测（2026-10-12，完整记录见
+[`docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md`](evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md)）**：
+
+| 域名 | 本机 debug 日志的拨出目标 | `/cdn-cgi/trace` 看到的出口 |
+|---|---|---|
+| `ifconfig.me` | `outbound connection to 34.160.111.145:443` | `2001:db8::a` ← IPv6（示意） |
+| `ip.sb` | `outbound connection to 172.67.75.172:443` | `2001:db8::a` ← IPv6（示意） |
+| `claude.ai` | `outbound connection to 160.79.104.10:443` | `203.0.113.7`（示意） |
+
+（**本文件不记录真实节点信息**，见铁律 7。上表两个 IPv4 是公开 DNS 解析结果、不是节点地址；
+出口列的 IPv4/IPv6 已替换为 [`RFC 5737`](https://www.rfc-editor.org/rfc/rfc5737)/`RFC 3849` 文档保留地址，
+真实值只存 `docs/evidence/` 且同样已脱敏。）
+
+节点的 **A 记录与 AAAA 记录**分别等于表中「走 IPv4」与「走 IPv6」的出口 ——
+**两个出口 IP 都等于节点自己的记录**，即网站看到的就是这台 VPS 本身。
+
+⚠️ **结论必须分段说，不要写「服务端不可能再选 IPv6」**（本文件早前版本的那句话是**错的**）：
+
+- **第一段（本地 → 服务端）**：已证实锁定 IPv4，`resolve` 生效，日志可证。
+- **第二段（服务端 → 目标站）**：地址族**完全由服务端决定**，本地配置无从约束（NAT64、服务端 `sniff` 后自行重解析域名等）。
+  可观测到的变化：首轮 23 个域名全走 IPv6，2 小时后只剩 2 个走 IPv6；同一域名 `anthropic.com` 连测 20 次全 IPv4。
+  ⇒ 是**服务端侧的时段性行为**，不是每连接随机。
+- **原因未证实**：为何服务端在某些时刻选 IPv6，未取得服务端配置/日志，属推断。
+  「禁用服务端 IPv6 即可解决」是**建议**，未在真实 VPS 上验证过。
 
 **关于用户报的 `ip.net.coffee`**：首页「分流出口 IP 汇总」表格的 `IP` 列是**真实测量**（对该站发请求、显示对方看到的出口 IP），
 所以那里出现 IPv6 = 当时出口真的走了 IPv6。但 `ip.net.coffee/claude/ipv6.html` 那篇
