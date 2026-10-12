@@ -330,7 +330,6 @@ def main():
     emit()
 
     # 扫描本仓库配置，看有没有真的踩到（用与 audit.py 相同的路径匹配，不用子串粗判）
-    sys.path.insert(0, str(ROOT / "tools"))
     try:
         import importlib.util
 

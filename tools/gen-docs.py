@@ -13,6 +13,7 @@ gen-docs.py — 由 docs/version-matrix.json 生成 docs/VERSION-MATRIX.md（人
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -38,8 +39,6 @@ ADOPT_LABEL = {
 
 
 def parse_version(v):
-    import re
-
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", v or "")
     return tuple(int(x) for x in m.groups()) if m else (0, 0, 0)
 

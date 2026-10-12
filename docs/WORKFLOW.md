@@ -282,14 +282,12 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
   "kind": "new",
   "since": "1.15.0",
   "title": "MASQUE 端点（CONNECT-IP）",
-  "adopt": "no",                              // yes | no | required
-  "reason": "现有 hy2/vless 节点已满足需求；NASQUE 需服务端支持",
-  "decide_by": "1.16.0",                      // 可选：到这个版本前必须重新看一次
-  "keywords": ["MASQUE", "CONNECT-IP"],     // 用于与 changelog 条目比对
-  "expect": {                                 // 可选：可机器检测的采纳标志
-    "path": "endpoints[type=masque]",
-    "state": "absent"                         // adopted=present / not_adopted=absent
-  }
+  "path": "endpoints[type=masque]",           // 可选：有字段可检测时才写
+  "expect": "absent",                          // 有 path 时必填：present=配置里必须有 / absent=配置里必须没有
+  "adopt": "no",                               // yes | no | must
+  "reason": "现有 hy2/vless 节点已满足需求；MASQUE 需服务端支持",
+  "decide_by": "1.16.0",                       // 可选：到这个版本前必须重新看一次
+  "keywords": ["MASQUE", "CONNECT-IP"]         // 用于与 changelog 条目比对
 }
 ```
 

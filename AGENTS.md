@@ -23,25 +23,11 @@
 如果用户给了一份**已有的配置**，让你改（不管改多小），**必做**：
 
 ```bash
-python - <<'EOF'
-import json
-a = json.load(open("用户原始配置.json", encoding="utf-8"))
-b = json.load(open("我改完的配置.json", encoding="utf-8"))
-def walk(o, p=""):
-    if isinstance(o, dict):
-        for k, v in o.items(): yield from walk(v, f"{p}.{k}" if p else k)
-    elif isinstance(o, list):
-        for i, v in enumerate(o): yield from walk(v, f"{p}[{i}]")
-    else: yield p, o
-A, B = dict(walk(a)), dict(walk(b))
-print("只在原始配置里（可能被我删了）:", sorted(set(A) - set(B)))
-print("只在生成配置里（可能是我加的）:", sorted(set(B) - set(A)))
-for k in sorted(set(A) & set(B)):
-    if A[k] != B[k]: print(f"改了: {k}: {A[k]!r} -> {B[k]!r}")
-EOF
+python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 ```
 
-**每一个差异都必须能说出为什么**。说不出原因的，就按原始配置保留。
+输出三段：`只在原始配置里（可能被我删了）`、`只在生成配置里（可能是我加的）`、
+`两边都有但值变了`。**每一个差异都必须能说出为什么**。说不出原因的，就按原始配置保留。
 这条是拿真实事故换来的（见 `docs/LESSONS.md` 的 **L4**）：我当初凭印象重写模板，
 把用户原始配置里本来就有的 `auto_detect_interface: true` 删了，直接导致真机没网。
 

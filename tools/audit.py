@@ -39,6 +39,18 @@ ALLOWED_RULESET_PREFIXES = (
     "https://gcore.jsdelivr.net/gh/",
 )
 
+# direct 出站里任何一个字段出现，就不算「空 direct」（不能作为规则集下载 detour）。
+# 详见 docs/LESSONS.md L1：空 direct 会 FATAL "detour to an empty direct outbound makes no sense"。
+# 注意 domain_strategy / network_strategy 已被 schema:"omit"，填了也不算数，不要加回来。
+DIRECT_NON_EMPTY_KEYS = (
+    "bind_interface", "inet4_bind_address", "inet6_bind_address",
+    "bind_address_no_port", "protect_path", "routing_mark", "reuse_addr",
+    "netns", "connect_timeout", "tcp_fast_open", "tcp_multi_path",
+    "disable_tcp_keep_alive", "tcp_keep_alive", "tcp_keep_alive_interval",
+    "udp_fragment", "domain_resolver", "network_strategy", "network_type",
+    "fallback_network_type", "fallback_delay", "detour",
+)
+
 # ---------------------------------------------------------------- 版本比较
 
 
@@ -289,20 +301,12 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
                     for o in outs
                     if isinstance(o, dict) and o.get("tag")
                 }
-                NON_EMPTY = (
-                    "bind_interface", "inet4_bind_address", "inet6_bind_address",
-                    "bind_address_no_port", "protect_path", "routing_mark", "reuse_addr",
-                    "netns", "connect_timeout", "tcp_fast_open", "tcp_multi_path",
-                    "disable_tcp_keep_alive", "tcp_keep_alive", "tcp_keep_alive_interval",
-                    "udp_fragment", "domain_resolver", "network_strategy", "network_type",
-                    "fallback_network_type", "fallback_delay", "detour",
-                )
 
                 def _empty(tag):
                     ob = by_tag.get(tag)
                     if not isinstance(ob, dict) or ob.get("type") != "direct":
                         return False
-                    return not any(k in ob for k in NON_EMPTY)
+                    return not any(k in ob for k in DIRECT_NON_EMPTY_KEYS)
 
                 route = cfg.get("route", {})
                 for i, hc in enumerate(cfg.get("http_clients") or []):
@@ -449,20 +453,13 @@ def audit_repo_rules(cfg, rep: Report):
     #     domain_resolver / connect_timeout 等。
     outbounds = cfg.get("outbounds", [])
     by_tag = {o.get("tag"): o for o in outbounds if isinstance(o, dict) and o.get("tag")}
-    NON_EMPTY = (
-        "bind_interface", "inet4_bind_address", "inet6_bind_address", "bind_address_no_port",
-        "protect_path", "routing_mark", "reuse_addr", "netns", "connect_timeout",
-        "tcp_fast_open", "tcp_multi_path", "disable_tcp_keep_alive", "tcp_keep_alive",
-        "tcp_keep_alive_interval", "udp_fragment", "domain_resolver", "network_strategy",
-        "network_type", "fallback_network_type", "fallback_delay", "detour",
-    )
 
     def _empty_direct(tag):
         """返回 True 表示该出站是"空洞 direct"（不能作为下载 detour）。"""
         ob = by_tag.get(tag)
         if not isinstance(ob, dict) or ob.get("type") != "direct":
             return False
-        return not any(k in ob for k in NON_EMPTY)
+        return not any(k in ob for k in DIRECT_NON_EMPTY_KEYS)
 
     hc_entries = cfg.get("http_clients") or []
     DL_TAG = "direct-download"
@@ -1432,12 +1429,9 @@ def find_singbox(explicit=None):
     env = os.environ.get("SINGBOX_BIN")
     if env:
         return env
-    for cand in (
-        ROOT / "bin" / ("sing-box.exe" if os.name == "nt" else "sing-box"),
-        Path("C:/Users/Administrator/Desktop/_probe/sing-box-1.14.3-windows-amd64/sing-box.exe"),
-    ):
-        if cand.exists():
-            return str(cand)
+    cand = ROOT / "bin" / ("sing-box.exe" if os.name == "nt" else "sing-box")
+    if cand.exists():
+        return str(cand)
     return shutil.which("sing-box")
 
 
