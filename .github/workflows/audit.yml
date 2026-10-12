@@ -36,7 +36,7 @@ jobs:
           install -m 755 "/tmp/sing-box-${V}-linux-amd64/sing-box" /usr/local/bin/sing-box
           sing-box version
 
-      - name: 配置与仓库门禁（8 类配置风险 + 5 道台账与扫查）
+      - name: 配置与仓库门禁（8 类配置风险 + 台账 / 决策 / 防泄漏 / 工具自检 / 模板文字）
         env:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
