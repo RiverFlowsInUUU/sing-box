@@ -480,6 +480,21 @@ sing-box 的 cachefile 包**不会创建父目录**（全包无 `Mkdir`/`MkdirAl
 修后 `claude.ai` 被解析成 `160.79.104.10`（Anthropic IPv4）、`api.openai.com` 同理，
 而 `www.qq.com` 也先 resolve 一次（`121.14.77.221`）再被 `geosite-cn → direct` 命中 —— 国内直连多一次本地查询，代价可接受。
 
+**真实节点端到端实证**（用用户真实 hysteria2 节点，非 direct 仿真）：
+
+```
+$ curl -x http://127.0.0.1:12090 https://claude.ai/   →  HTTP 403（可达）
+$ grep "outbound connection to" real-A.log
+outbound connection to 160.79.104.10:443      ← hy2 出站拿到的是 IPv4 字面量
+```
+
+即：VPS 端收到的目标就是 `160.79.104.10`，没有 IPv6 可选项，**服务端不可能再选 IPv6**。
+
+**关于用户报的 `ip.net.coffee`**：首页「分流出口 IP 汇总」表格的 `IP` 列是**真实测量**（对该站发请求、显示对方看到的出口 IP），
+所以那里出现 IPv6 = 当时出口真的走了 IPv6。但 `ip.net.coffee/claude/ipv6.html` 那篇
+《为什么不建议用 IPv6 访问 Claude Code》是 SEO 文案 —— 它的「关闭 IPv6 的 6 个实际好处」是通用论述，
+**不对你的连接做任何检测**（页面里只有一个静态示例表头）。两者必须分开看待。
+
 **修法**
 
 把 `{"action": "resolve", "strategy": "ipv4_only"}` 从 `route.rules` **末尾**前移到
