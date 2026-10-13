@@ -156,11 +156,9 @@ git rev-list --count HEAD               # 恢复完整提交数
 
 **对策**：三条都过才算数 —— `check` + 版本矩阵 + 平台矩阵。交付前跑启动级验证。
 
-> 📌 **本仓矩阵与官方逐条对账结果（2026-10-13 实测）**：
-> 抽查 8 条 `deprecated` 条目，`removed_in` 与官方 deprecated 页正文声明
-> **逐条一致**（`tun_stack→1.17.0`、`download_detour→1.16.0`、`tls_inline_acme→1.16.0`、
-> `dns_rule_action_strategy→1.16.0`、`rule_set_ip_cidr_accept_empty→1.16.0`、
-> `independent_cache→1.16.0`、`store_rdrc→1.16.0`、`dns_rule_outbound→1.16.0`）。
+> 📌 **本仓矩阵与官方逐条对账结果（2026-10-13 实测）**：抽查 8 条 `deprecated` 条目，
+> `removed_in` 与官方 deprecated 页正文声明**逐条一致**。
+> （具体版本号不复述 —— 那些是**未来移除计划**，与当前锁定版无关，见 `AGENTS.md` H3。）
 
 ### E5. 平台差异表不是全都上了锁 🔵
 

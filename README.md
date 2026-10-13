@@ -38,6 +38,7 @@ python tools/mknode.py '<分享链接>' --platform <desktop|android|ios> --group
 | 要做的事 | 入口命令 | 正文在哪 |
 |---|---|---|
 | 改配置 / 出配置 / 排障 | `python tools/mknode.py` | `AGENTS.md` |
+| **加一条 route/dns 规则** | `python tools/rule-add.py` | `docs/CONFIG-ANATOMY.md` §4 |
 | 改规则（升级内核 / 加门禁 / 改矩阵 / 改组 tag） | — | `MAINTAINERS.md` |
 | 全量校验 | `bash tools/check-all.sh --run` | 本文件 §4 |
 | 上游有新版本了 | `python tools/upgrade-check.py` | `docs/SINGBOX_UPGRADE.md` |

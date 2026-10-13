@@ -98,7 +98,7 @@ Windows / Android / iOS 配置。
 |---|---|---|
 | H1 | **换设备 / 换 AI Agent / 换运行环境后，第一步必须完整克隆。严禁浅克隆。** | [§七](docs/AI_SYNC_WORKFLOW.md#七完整克隆规则最高优先级) · [E1](docs/EXPERIENCES.md) |
 | H2 | **只在我手动触发后行动。** 不允许自动定时同步。 | [§三](docs/AI_SYNC_WORKFLOW.md#三触发条件与准入规则) |
-| H3 | **只跟 sing-box 上游 latest stable**，禁 beta / alpha / rc / nightly / pre-release / 测试版 / 预览版。 | [§三](docs/AI_SYNC_WORKFLOW.md#三触发条件与准入规则) |
+| H3 | **只跟 sing-box 上游 latest stable**，禁 beta / alpha / rc / nightly / pre-release / 测试版 / 预览版。查官方文档时**允许**读 `testing` 分支的 md 源（官网正文出自那里），但**只许取"当前锁定版及更早"的事实**；比锁定版更新的条目（如 1.15/1.16 的废弃计划）**一律 pass，不进结论、不进配置、不进文档**。 | [§三](docs/AI_SYNC_WORKFLOW.md#三触发条件与准入规则) |
 | H4 | **模块 2（上游升级）不自动升级** —— 可提醒、可询问、需我授权口令。 | [SINGBOX_UPGRADE](docs/SINGBOX_UPGRADE.md) |
 | H5 | **新功能逐点请示**，不默认开启、不批量开启。 | [§五](docs/SINGBOX_UPGRADE.md#五功能条目的结构化格式) |
 | H6 | **模板语法迁移逐文件、逐字段、逐端确认**，不得自动批量替换。 | [TEMPLATE_MIGRATION](docs/TEMPLATE_MIGRATION.md) |
