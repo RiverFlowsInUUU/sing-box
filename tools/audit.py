@@ -996,6 +996,50 @@ def audit_repo_rules(cfg, rep: Report, is_template: bool = False):
             )
 
 
+
+    # 4c) 封 QUIC/HTTP3 的规则必须存在，且位置在首个分流之前（对应 D24）
+    #
+    # 为什么需要：这条规则是 2026-10-13 新加的，**当时没有任何门禁**——
+    # 删掉它毫无症状，而「无门禁 = 免责声明」正是 L47 用五连犯换来的结论。
+    # 拦三类失效：
+    #   ① 规则**消失**（误删）—— 最危险，删了完全没信号
+    #   ② 规则**位置错**（排到分流之后）—— 国内流量先命中 geosite-cn/geoip-cn
+    #      走掉，UDP 443 就漏了，等于没配
+    #   ③ 规则**写错**（network / port 值不对）—— 看起来还在，实际不匹配
+    udp443 = [
+        i for i, r in enumerate(route.get("rules", []))
+        if isinstance(r, dict)
+        and r.get("network") == "udp"
+        and r.get("port") == 443
+        and str(r.get("action", "")) == "reject"
+    ]
+    # 骨架模板不含 route 段（只有出站与策略组），不做存在性断言 ——
+    # 与 audit_matrix 的 present 断言、empty_group_skeleton 同一处理。
+    if is_template:
+        pass
+    elif not udp443:
+        rep.error(
+            "quic_block_missing",
+            "route.rules 里没有「封 UDP 443」的规则（`{\"network\":\"udp\",\"port\":443,"
+            "\"action\":\"reject\"}`）—— 没有它，QUIC/HTTP3 不会被拦，"
+            "DNS 层那层只在客户端尊重 HTTPS/SVCB 发现时才生效（见 D24）。"
+            "注意：删掉它不会有任何其他症状，这条门禁是唯一的守卫",
+        )
+    else:
+        first_route = next(
+            (i for i, r in enumerate(route.get("rules", []))
+             if isinstance(r, dict) and str(r.get("action", "route")) == "route"),
+            None,
+        )
+        if first_route is not None and udp443[0] > first_route:
+            rep.error(
+                "quic_block_not_first",
+                f"封 UDP 443 的规则在 route.rules[{udp443[0]}]，"
+                f"但首个分流规则在 route.rules[{first_route}] —— "
+                "排到分流之后等于没配：国内流量会先命中 geosite-cn / geoip-cn 走掉，"
+                "UDP 443 漏出去。它必须排在所有 route 之前（UDP 443 无论去哪都该拦）",
+            )
+
 GROUP_TYPES = ("selector", "urltest", "block", "dns")
 # 分流组 tag。**这就是配置里真实出现的字符串，含 emoji 与一个空格**——
 # 改动它等于改动所有 profile / 模板 / 规则 / DNS detour / route.final，

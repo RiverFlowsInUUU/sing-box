@@ -2135,6 +2135,43 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+---
+
+## L49 封 QUIC 的规则是"新增即无门禁"——删掉它毫无症状
+
+**现象**：2026-10-13 按用户要求新增 `route.rules[4] = {"network":"udp","port":443,"action":"reject"}`
+（封 QUIC / HTTP3，强制回落 TCP HTTPS，见 D24）。
+
+这条规则**加完之后**是有效的 —— 但它**没有任何门禁**：
+`audit.py` 不检查它是否存在、位置是否正确。
+⇒ 将来任何人删掉它，**不会有任何机器信号**：`check` 通过、`run` 通过、全仓门禁全绿，
+而 QUIC 悄悄恢复。这与 L47 记的「**门禁：无 = 免责声明**」是**同一类隐患**，
+且犯的时机更早 —— L47 是"已有规则没人守"，L49 是"**新加的规则当场就没守**"。
+
+**根因**：加规则时只想着"配置对不对"，没想"**将来它被删掉，谁会发现**"。
+本仓的既有做法里，`resolve_not_first` / `tun_without_auto_detect_interface` 这类
+**结构性约束**都是有门禁的 —— 唯独这条新增时漏了。
+
+**为什么没被拦住**：没有机制在"新增一条规则"时提醒"顺手想门禁"。
+`gate_without_lesson` 只在**反向**工作（代码有 code、文档没出处），
+它管不了"文档与代码都没有"的情况。
+
+**修法**：
+
+1. 新增两个门禁，拦三类失效：
+   - **`quic_block_missing`** —— 规则**消失**（误删是最大风险，因为它毫无其他症状）
+   - **`quic_block_not_first`** —— 规则**位置错**（排到首个分流之后 ⇒ 国内流量先命中
+     `geosite-cn` / `geoip-cn` 走掉，UDP 443 漏出去，等于没配）
+2. 骨架模板 `templates/groups.json` 豁免（它不含 route 段）——
+   与 `empty_group_skeleton` / `matrix present` 断言同一处理。
+3. 副作用（**有益**）：这条门禁会连带检查 `local/` 下**已生成的成品**。
+   实测立刻抓到一份上一轮生成的 `local/ios.json` 没有新规则 ——
+   说明"本地成品过期"这件事从此有了机器信号。
+
+**门禁**：`quic_block_missing`, `quic_block_not_first`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

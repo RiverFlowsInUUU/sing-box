@@ -131,7 +131,23 @@ git rev-list --count HEAD               # 恢复完整提交数
 
 ### E4. `check` 通过 ≠ 能启动 ≠ 三端都对 🟢
 
-`sing-box check` 的行为有明确边界：
+**官方依据**（2026-10-13 联网核对）：
+
+- 废弃清单（官方原文，`deprecated.md`）：
+  <https://sing-box.sagernet.org/deprecated/>
+  · 源码仓路径：`SagerNet/sing-box` 的 `testing` 分支 → `docs/deprecated.md`
+- 迁移指南：<https://sing-box.sagernet.org/migration/>
+
+官方 deprecated 页对每一条都写明**废弃版本**与**移除版本**，例如原文：
+
+> Legacy `download_detour` remote rule-set option is deprecated, use `http_client` instead.
+> **Old field will be removed in sing-box 1.16.0.**
+
+⇒ 官方**只提供版本事实**（它宣布字段何时废弃、何时移除）。
+**「`check` 对已废弃未移除的字段是否报错」这件事，官方文档没有承诺** ——
+那一条属本仓实测结论，见下方 🟡。
+
+**本仓实测（🟡，不是官方口径）**：`sing-box check` 的边界 ——
 
 - **只反序列化、不初始化** —— 初始化期的问题（如规则集引用、空出站）它一律 exit=0。
 - **不校验平台能力** —— 某端不支持的字段照样通过。
@@ -139,6 +155,12 @@ git rev-list --count HEAD               # 恢复完整提交数
 - 对「**已废弃但未移除**」的字段可能**完全静默**。
 
 **对策**：三条都过才算数 —— `check` + 版本矩阵 + 平台矩阵。交付前跑启动级验证。
+
+> 📌 **本仓矩阵与官方逐条对账结果（2026-10-13 实测）**：
+> 抽查 8 条 `deprecated` 条目，`removed_in` 与官方 deprecated 页正文声明
+> **逐条一致**（`tun_stack→1.17.0`、`download_detour→1.16.0`、`tls_inline_acme→1.16.0`、
+> `dns_rule_action_strategy→1.16.0`、`rule_set_ip_cidr_accept_empty→1.16.0`、
+> `independent_cache→1.16.0`、`store_rdrc→1.16.0`、`dns_rule_outbound→1.16.0`）。
 
 ### E5. 平台差异表不是全都上了锁 🔵
 
