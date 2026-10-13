@@ -145,9 +145,31 @@ git branch -a                           # 能读出所有相关分支
 详细规则、禁止的克隆参数、无法克隆时的处置 →
 [`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md#七完整克隆规则最高优先级) §七 · 实例 [`E1`](docs/EXPERIENCES.md)。
 
+### 换设备后的第二件事：登记内核路径
+
+克隆完之后，如果本机没装内核，**`check` / `run` 会静默跳过** —— 看起来照样 PASS（见 H14）。
+所以换设备后第二步是让它找得到内核：
+
+```bash
+mkdir -p local
+echo '/绝对路径/to/sing-box' > local/.singbox-bin    # local/ 已 gitignore，不进仓库
+```
+
+解析顺序：`SINGBOX_BIN` 环境变量 → `bin/sing-box[.exe]` → `PATH` → `local/.singbox-bin`。
+
+**登记完自己验一下**（本仓曾因漏报「跳过」而发过假绿灯）：
+
+```bash
+python tools/audit.py 2>&1 | grep -i "matrix_probe_skipped"
+```
+
+**没有输出** = 内核已就位。有输出 = 内核没找到，门禁不完整，**别拿这时的「全绿」当结论**。
+
+> 注意：`local/` 是**不入库**的，所以这一步**每次换设备都要重做** —— 它不会跟着克隆过来。
+
 ---
 
-## 9. 待确认信息
+## 9. 关键事项确认表
 
 | 项 | 状态 |
 |---|---|

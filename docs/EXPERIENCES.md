@@ -253,7 +253,7 @@ Android VpnService 把本 App 自己的流量也抓进隧道 ⇒ 出站回灌 tu
 | 三端模板目录 | ✅ 已确认：可运行模板在 `profiles/<大版本>/<平台>-lazy.json`；`templates/{ios,android,windows}/` 为索引入口 |
 | 上游项目 URL/名称 | ✅ 已确认：`https://github.com/SagerNet/sing-box` · `https://sing-box.sagernet.org/` |
 | 当前同步版本记录文件路径 | ✅ 已确认：`singbox_version.txt` |
-| 「仓库不保存可运行配置」 | `{{TODO: 待确认}}` — 与本仓现状不符，`profiles/1.14/` 下存有三份可运行配置（占位节点） |
+| 「仓库不保存可运行配置」 | ✅ 已确认：**实际节点**与**配置实例**确实不入库（真实节点只进 `local/`）；`profiles/` 下保留的是**占位骨架**，是三端模板本体兼门禁对账基准 |
 
 ---
 
