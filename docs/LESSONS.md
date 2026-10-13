@@ -2063,6 +2063,44 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## L48 「值缺失 ⇒ 门禁静默」：三处同形缺陷，其中两处是真 FATAL
+
+**现象**：门禁普遍写成 `if x and x not in allowed:` —— 于是**把 `x` 整个删掉反而完全静默**。
+本次排查确认三处：
+
+1. **`route.final` 缺失** → 不报。后果：未被规则命中的流量走 **sing-box 默认出站**
+   （first outbound），而不是 🚀 Proxy —— 表现为「能跑、但分流悄悄不对」。
+2. **`dns.final` 缺失** → 不报。后果：未被规则命中的查询走 **`dns.servers` 第一条**，
+   而本仓第一条是明文 `dns-bootstrap` ⇒ **DNS 静默降级成明文 UDP**。
+3. **`empty_group` 的骨架豁免按「组名」放宽** → 完整可运行配置里组清空时只报 WARN
+   （`empty_group_skeleton`）。而空组是真 FATAL：`initialize outbound[N]: missing tags`，
+   且 `sing-box check` 对它**完全静默**（只反序列化、不初始化）。
+
+**根因**：**「值错了」与「值没了」被当成了同一件事，而只处理了前者。**
+门禁的注意焦点全在「这个值指向了不存在的 tag」，于是 `x` 为空时直接短路跳过 ——
+但「缺失」往往让 sing-box 走**默认值**，比「写错」更隐蔽：写错至少还有个明显的错值可查，
+缺失是**静默改道**，只能靠读配置发现。
+
+第 3 处还叠了一层：豁免的**判据选错了维度**。它想表达「这是骨架、允许空」，
+却写成「这个组名在 `NO_NESTING_GROUPS` 里」—— 骨架是**文件的属性**，不是**组名的属性**。
+这与 L47 的「拿目录名当安全判据」是同一种病：**用错误的维度表达规则**。
+
+**为什么没被拦住**：三处门禁**都没有负向用例覆盖**（115 个门禁里只有 29 个有）。
+本次是有人在系统排查时手工造坏样本才摸出来的 —— 这正是「门禁有，但没人证明它会响」的代价。
+
+**修法**：
+1. 三处全部补齐：**缺失必须是它自己的错误**（`final_missing` / `dns_final_missing` / `empty_group`）。
+2. `empty_group` 的豁免判据由「组名」改为**文件是不是骨架**（`is_template`），
+   并与 `audit_matrix` 的 present 断言同一处理方式。
+3. 新增三个负向用例（29 → **32**）。
+4. **新增反向对账**（`audit_tools`）：`negtest.py` 里每个 `m_*` 破坏函数都必须登记进 `CASES`，
+   否则报 `tool_selftest_failed` —— 豁免走显式白名单。这是 L47 的直接对策：
+   那次死掉的是一个**没登记的**破坏函数，而没有任何东西在检查「有没有漏登记」。
+
+**门禁**：`final_missing`, `dns_final_missing`, `empty_group`, `tool_selftest_failed`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

@@ -230,6 +230,27 @@ def m_placeholder_server(cfg):
     cfg["outbounds"][0]["server"] = "node-01.my-vps-host.xyz"
 
 
+def m_route_final_missing(cfg):
+    """把 route.final 整个删掉 —— 流量会静默走 sing-box 默认出站（L48）。"""
+    cfg["route"].pop("final", None)
+
+
+def m_dns_final_missing(cfg):
+    """把 dns.final 整个删掉 —— 查询会走 dns.servers 第一条（本仓是明文 bootstrap，L48）。"""
+    cfg["dns"].pop("final", None)
+
+
+def m_empty_group_in_real_config(cfg):
+    """完整可运行配置里把组清空 —— 真 FATAL: missing tags（L48）。
+
+    旧写法对 NO_NESTING_GROUPS 里的组一律降级成 WARN，于是这条**抓不到**。
+    """
+    for o in cfg.get("outbounds", []):
+        if isinstance(o, dict) and o.get("type") in ("selector", "urltest"):
+            o["outbounds"] = []
+            return
+
+
 # (用例名, 破坏函数, 期望的 code, 期望级别, 作用范围)
 #   作用范围 "single" = 改一份临时配置，只跑那一份（快）
 #            "repo"   = 临时改**真实** profile 跑整个仓库审计（用于「必须比对真实文件」的门禁，
@@ -262,6 +283,10 @@ CASES = [
     # 注意：这里必须用 "single"（跑临时配置）而不是 "repo" —— 后者会真去改 profiles/ 下的
     # 入库文件，一旦中途异常就可能把真域名留在仓库里，风险不对称。
     ("placeholder-server",        m_placeholder_server,        "placeholder_server",             "ERROR", "single"),
+    # L48：三处「值缺失 ⇒ 门禁静默」的补齐。都是真 FATAL / 静默改道，而 check 不报。
+    ("route-final-missing",       m_route_final_missing,       "final_missing",                  "ERROR", "single"),
+    ("dns-final-missing",         m_dns_final_missing,         "dns_final_missing",              "ERROR", "single"),
+    ("empty-group-real-config",   m_empty_group_in_real_config,"empty_group",                    "ERROR", "single"),
     ("dup-tag",                   m_dup_tag,                   "dup_tag",                        "ERROR", "single"),
     ("direct-empty",              m_direct_empty,              "download_detour_empty_direct",   "ERROR", "single"),
     ("strict-route-on-mobile",    m_strict_route_on_mobile,    "platform_strict_route",          "ERROR", "single"),
