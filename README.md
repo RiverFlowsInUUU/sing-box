@@ -37,7 +37,25 @@ python tools/mknode.py 'vless://...' --platform ios --group proxy
 
 ### 我是 AI / 想按规范生成
 
-从 [`AGENTS.md`](AGENTS.md) 开始读 —— 它是给 AI 的入口，也只需要读那一份。
+从 [`AGENTS.md`](AGENTS.md) 开始读 —— 它是给 AI 的**指路牌**，详细内容都在 `docs/` 下。
+
+## 文档索引
+
+| 文档 | 用途 |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | **指路牌 + 硬规则入口**（面向 AI Agent） |
+| [`MAINTAINERS.md`](MAINTAINERS.md) | 改**规则本身**的操作手册：升级流程 / 加门禁 / 改矩阵 / 改组 tag |
+| [`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md) | **AI 驱动的配置同步工作流**（5 个模块 + 流程图 + 指令模板） |
+| [`docs/SINGBOX_UPGRADE.md`](docs/SINGBOX_UPGRADE.md) | 上游升级流程与新功能逐点请示 |
+| [`docs/TEMPLATE_MIGRATION.md`](docs/TEMPLATE_MIGRATION.md) | 模板 / 闸门文件语法迁移规则 |
+| [`docs/CLIENTS_IOS_ANDROID_WINDOWS.md`](docs/CLIENTS_IOS_ANDROID_WINDOWS.md) | 三端差异与交付格式 |
+| [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 经验总结（区分官方确认 / 经验推测） |
+| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | 既有工作流细节：排障、常见误区、目录职责 |
+| [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
+| [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
+| [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃 / 移除总表（自动生成） |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 决策记录：新功能为何启用 / 不启用 |
+| [`docs/LESSONS.md`](docs/LESSONS.md) | 事故台账（**查时读，别整读**） |
 
 ## 仓库结构
 
