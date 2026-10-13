@@ -467,6 +467,24 @@ def run_case_matrix(name, mutate, base_text, level):
             pass
 
 
+# ── doc 作用域：仓库级台账类门禁（见 tools/_negdoc_runner.py 的说明）────
+sys.path.insert(0, str(ROOT / "tools"))
+from _negdoc_runner import make_doc_runner          # noqa: E402
+from negdoc_mutations import DOC_MUTATIONS, cases as _negdoc_cases   # noqa: E402
+import _negdoc_funcs as _ndf                                        # noqa: E402
+import _negcfg_funcs as _ncf                                        # noqa: E402
+
+run_case_doc = make_doc_runner(DOC_MUTATIONS, _audit_codes)
+
+# 把 doc 组用例并入 CASES（破坏函数已在下方以 m_* 形式定义）
+for _name, _fn, _code, _lv, _scope in _negdoc_cases():
+    CASES.append((_name, getattr(_ndf, _fn), _code, _lv, _scope))
+
+# 单文件配置类（single 作用域）—— 见 tools/_negcfg_funcs.py
+for _name, _fn, _code, _lv in _ncf.CASES:
+    CASES.append((_name, getattr(_ncf, _fn), _code, _lv, "single"))
+
+
 def main():
     ap = argparse.ArgumentParser(description="门禁负向回归（故意改坏配置，确认门禁会响）")
     ap.add_argument("-k", metavar="SUBSTR", help="只跑名字含该子串的用例")
@@ -494,6 +512,10 @@ def main():
                     codes = run_case_matrix(name, mutate, base_text, level)
                 elif scope == "repo":
                     codes = run_case_repo(name, mutate, base_text, level)
+                elif scope == "doc":
+                    codes = run_case_doc(name, mutate, base_text, level)
+                elif scope == "doc_kernel":
+                    codes = run_case_doc(name, mutate, base_text, level, use_kernel=True)
                 else:
                     codes = run_case_single(name, mutate, base_text, level)
                 ok, why = expect in codes, "命中"
