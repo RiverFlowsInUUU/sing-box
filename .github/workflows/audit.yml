@@ -43,6 +43,13 @@ jobs:
 
       - name: 门禁负向回归（故意改坏 66 处，确认门禁真的会响）
         run: python tools/negtest.py
+      - name: 改文件方式指纹（BOM / NUL / 行尾）
+        run: |
+          # L40 那条铁律原本写着「门禁：无」—— 于是成了全仓唯一没有机器兜底的规则，
+          # 被连犯 5 次。验不了「有没有用 patch-text」（绕过是通用能力），
+          # 但**绕过才会留下的产物指纹**能验，且是确定性的。
+          python tools/check-edit-method.py
+
       - name: markdown 结构校验（围栏 / 标题层级 / 链接 / 锚点）
         run: |
           # 本仓没有 markdownlint 配置 → 用 tools/mdlint.py 兜底。

@@ -2786,6 +2786,26 @@ def audit_tools(rep: Report):
     except Exception as ex:  # noqa: BLE001 — 自检本身失败也要报出来
         rep.error("tool_selftest_failed", f"无法对 diff_config 做自检：{ex!r}")
 
+    # ⚠️ 「改文件方式」的产物指纹（对应 L40 的 `edit_method_fingerprint`）。
+    #    这条铁律原本写着「门禁：无」，于是成了全仓唯一没有机器兜底的规则，被连犯 5 次。
+    #    验不了「有没有用 patch-text」（绕过是通用能力），但**绕过才会留下的指纹**能验：
+    #    BOM / NUL / 行尾混用 / 整文件 CRLF —— 仓库已统一 LF，出现即说明被裸写过。
+    try:
+        ck = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "check-edit-method.py"), "--json"],
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60,
+        )
+        if ck.stdout.strip():
+            findings = json.loads(ck.stdout)
+            for it in findings:
+                rep.error(
+                    "edit_method_fingerprint",
+                    f"{it['file']} 出现「绕过 patch-text 裸写」的指纹：{it['message']}",
+                )
+    except (OSError, subprocess.SubprocessError, ValueError) as ex:
+        rep.warn("edit_method_fingerprint", f"指纹检测未能执行：{ex!r}")
+
     # ⚠️ **反向对账**：`negtest.py` 里每个 `m_*` 破坏函数都必须登记进 `CASES`。
     #    没有这一步，「写了破坏函数但忘了登记」是**完全的静默** ——
     #    negtest 只检查已登记用例响不响，孤立在文件里的死函数它看不见（L47）。
