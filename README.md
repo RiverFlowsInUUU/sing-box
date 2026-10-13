@@ -84,6 +84,7 @@ docs/CLIENTS_IOS_ANDROID_WINDOWS.md  模块 4：三端差异 / 流程 A 全流�
 docs/EXPERIENCES.md              模块 5 + 排障（按报错分流）+ 常见误区
 docs/LESSONS.md                  事故台账【查时读，别整读】
 docs/DECISIONS.md                决策记录【查时读】
+docs/CONFIG-ANATOMY.md           当前配置长什么样（按执行顺序，改配置前先读）
 docs/PROTOCOL-MAPPING.md         分享链接 → outbound 字段映射
 docs/PLATFORM-MATRIX.md          三端能力差异表
 docs/VERSION-MATRIX.md           字段废弃/移除总表（自动生成，勿手改）

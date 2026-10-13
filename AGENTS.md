@@ -135,6 +135,7 @@ Windows / Android / iOS 配置。
 | [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 模块 5：经验总结（区分官方确认 / 经验推测 / 本仓约定） |
 | [`MAINTAINERS.md`](MAINTAINERS.md) | **改规则**的操作手册：升级流程、加门禁、改矩阵、改组 tag |
 | [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 排障（按报错分流）、三层问题模型、常见误区、经验总结 |
+| [`docs/CONFIG-ANATOMY.md`](docs/CONFIG-ANATOMY.md) | **当前配置长什么样**（按执行顺序，改配置前先读） |
 | [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
 | [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
 | [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃/移除总表（自动生成，勿手改） |
