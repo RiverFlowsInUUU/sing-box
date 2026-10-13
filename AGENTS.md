@@ -6,7 +6,7 @@
 ## 0. 一句话任务
 
 用户只给**节点分享链接**（`vmess://` `vless://` `trojan://` `hysteria2://` `ss://` `anytls://` …）
-和**想要的落点**（Proxy / AI / AD 三个分流组之一），你负责：
+和**想要的落点**（🚀 Proxy / 🤖 AI / 🚫 AD 三个分流组之一），你负责：
 
 0. **先读 `docs/LESSONS.md`（事故台账）** —— 里面逐条记录了历史上真机上出过的事故、
    根因、以及对应的门禁 code。开工前扫一遍，别重犯。
@@ -40,20 +40,21 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 3 | **已移除字段 = 致命错误**。见 `docs/VERSION-MATRIX.md` 的"已移除"列 |
 | 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
 | 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
-| 6 | **分流组只有三个**：`Proxy`（默认代理，**本身就是 urltest**）、`AI`（**也是 urltest**，独立优选）、`AD`；再加 `direct` 与 `block` 两个出站。**`Proxy` 与 `AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `Proxy`）。国内/私有/广告**不出组**，用规则直连或落 AD |
+| 6 | **分流组只有三个**：`🚀 Proxy`（默认代理，**本身就是 urltest**）、`🤖 AI`（**也是 urltest**，独立优选）、`🚫 AD`（**出口只有 `block`**）；再加 `direct` 与 `block` 两个出站。**三个组的 tag 必须逐字带 emoji**（`🚀 Proxy` / `🤖 AI` / `🚫 AD`），它们既是引用目标也是客户端策略组列表里的显示名。**`🚀 Proxy` 与 `🤖 AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `🚀 Proxy`）。国内/私有/广告**不出组**，用规则直连或落 `🚫 AD` |
 | 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + 尚未 add 的新文件 + commit message**（`git ls-files` 与 `git ls-files --others --exclude-standard` 合并 —— 只看前者会漏掉新写的文档，本地绿、CI 红，见 L29）（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态**：分两段看，别混为一谈。<br>① **2026-10-12 删库重建后**：旧仓的所有对象随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。<br>② **2026-10-13 一次 force-push 后**：为清掉一个被 `--amend` 修改过 message 的已推送提交，执行了 `push --force-with-lease`；旧提交随即**又可直取**（同一 URL 实测回到 **HTTP 200**，对照随机 SHA 仍 404）。⇒ 「force-push 只重置分支指针」这条**当场被再次验证**：删库重建才是彻底清除，力推送只是把指针挪开。<br>**结论**：不要以为 ① 的 404 是常态；只要还在 force-push，旧对象就会重新可取消。（2026-10-13 那次泄漏物只是一个随手编的公网 IP，与用户节点无关，风险评估后认为可接受。） |
 | 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
 | 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |<br>**可选加固：DNS 层前置拦截**。`dns.rules` 里插两条（`jinx-direct` → `route` `dns-cn`、`jinx-ads`+`awanue-ads` → `predefined` `rcode: NXDOMAIN`），两条都必须排在 `geosite-cn` **之前**。**`dns.rules` 与 `route.rules` 是两份独立的顺序表**，改一处必须改另一处，否则静默失效（L28）。拦截动作只能用 `predefined`/`reject`，**写成 `route` 等于没拦**。**route 层规则不能删**：应用自带 DoH/DoT 只有 route 层拦得住。详见 `docs/evidence/2026-10-12-dns-layer-adblock-feasibility.md` 与 `docs/DECISIONS.md` D13 |
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
 | 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」**。<br>**唯一例外（允许且推荐）**：用 `log.level = debug` 读 **sing-box 自己的日志**来判断「本机往出站递了什么」——`router: resolved [...]` 与 `outbound connection to <目标>` 是本机产生的记录，不受网关劫持影响（能据此区分「目标是 IP 字面量」还是「目标是域名」）。证据须存档到 `docs/evidence/` |
 | 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
-| 13 | **日志里出现 `using outbound/selector[AD]: operation not permitted` 是正常的**，不是 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
+| 13 | **日志里出现 `using outbound/selector[🚫 AD]: operation not permitted` 是正常的**，不是 🚫 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” 🚫 AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**🚫 AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
 | 14 | **「只走 IPv4」必须端到端**。`dns.strategy: "ipv4_only"` 只管本地 DNS；目标域名默认是**原样交给代理服务端**的。必须在 `route.rules` 里加 `{"action": "resolve", "strategy": "ipv4_only"}`，**位置紧跟 `hijack-dns` 之后、排在所有 `route`/`reject`/`bypass` 之前**（放末尾等于没放 —— 首个 route/reject 命中即 `break match`，见 L18）。`route/conn.go:103-104` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，目标变成 IPv4 字面量。`strategy` 不要省。`audit.py` 有 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` / `resolve_not_first` 门禁兜底 |
 | 15 | **出口 IP 的地址族不由客户端决定**。`resolve` 只能保证「本地 → 服务端」这一段是 IPv4 字面量（日志可证）；「服务端 → 目标站」那一段完全由服务端决定（NAT64、服务端 `sniff` 后自行重解析域名等）。⇒ 看到 IPv6 出口时**不要在本机配置里找原因、更不要为了它继续加固本地**，先确认该地址是不是节点本身的 AAAA 记录；要改就去服务端禁用 IPv6 出网。**已证实**：本地已全 IPv4 仍出现 VPS 自身 AAAA 出口；**未证实**：服务端为何在某些时段选 IPv6、禁用 IPv6 是否就能解决（属建议，未在真实 VPS 验证）。详见 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
 | 16 | **上游新增功能必须显式写下「启用 / 不启用 / 必须跟随」**。上游发新版本时，除了「哪些字段要删」（`deprecated`/`removed`），还有「多了哪些新能力」——后者**没有默认答案**，不写就是隐式选择了“不启用”，理由往往是“没注意到”。⇒ 每个新功能在 `docs/version-matrix.json` 里建一条 `kind: "new"`（必填 `adopt` + `reason`，有字段可检测的还要 `expect`），并在 `docs/DECISIONS.md` 记下理由与备选方案。`audit.py` 有 `new_feature_without_adoption` / `new_feature_expect_invalid` / `new_feature_decision_overdue` / `new_feature_uncovered` / `decision_without_record` 门禁兜底 |
 | 17 | **改配置、改流程都先拉仓库、先看 diff**。走到新环境时先 `git clone`（或 `git pull`），在本地产出改动后：**先 `git diff` 给人看、得到同意、才 `commit` / `push`**。**不得直接覆盖已有文件** —— 历史上有过“把已更正过的文档又改回错误结论”的先例（L17 写反 → L18 推翻）。**克隆拿不到 `local/`**（已 `.gitignore`），真实节点只能由用户当场提供（铁律 7） |
 | 18 | **依据有优先级：官方文档 > 官方源码 > 本仓文档**。三条冲突时以官方为准，并**当场修本仓文档**，不要留「以本仓结论为准」的余地。① 官方 `docs/clients/{apple,android,desktop}/` 与 `docs/configuration/`（本仓快照见 `docs/upstream-*.md`）；② 内核源码 `protocol/tun/`、`route/` 与官方客户端源码 `sing-box-for-apple` / `sing-box-for-android`；③ 本仓 `docs/*.md`。**本仓的每一条经验结论都必须能追到 ①②**，追不到的不写（写成「未验证」而不是写成结论）。 |
 | 19 | **平台差异必须同时落三处，缺一就是静默失效**：① 改 `profiles/1.14/*-lazy.json`；② 在 `docs/PLATFORM-MATRIX.md` §4 表里加**一行**（第一列必须是 `` `JSON 路径` ``，单元格必须是 `` `JSON 字面量` `` 或 `**删除**` —— 说明文字写在表外）；③ 需要时在 `tools/audit.py` 加门禁。`matrix_platform_stale` 逐格对账、`profile_drift` 反向兜底（§4 未登记的差异一律 ERROR）。**平台的能力清单（§1/§1a/§2/§2a）无法机器核对**（没有可靠的官方机读源），只能人工按「来源」一栏复核 —— 别误以为它也上了锁。 |
+| 20 | **三个分流组的 tag 是不可随手改的契约**：规范名逐字是 `🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + **一个 ASCII 空格** + 名字）。它们是 `route.final`、`route.rules[].outbound`、`dns.rules` 与规则集的引用目标，写错一个字符就等价于「tag 找不到」（`check` 不报，运行时报 `outbound not found` 或静默落到 `final`）；同时它们也是客户端策略组列表里的显示名，所以统一带 emoji 以便与节点 tag 区分。**改 tag 必须端到端改**：`profiles/1.14/*-lazy.json` + `templates/groups.json` + `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）+ `AGENTS.md` / `README.md` / `docs/WORKFLOW.md` / `docs/PROTOCOL-MAPPING.md` / `nodes/nodes.example.json` + 仓库外 `local/` 下的运行配置；门禁 `group_tag_incomplete` / `template_group_tag_incomplete` 盯形态，`template_profile_group_missing` / `profile_group_not_in_template` 盯模板 ⟺ 配置一致。**引用面必须靠 grep 列，不能靠记忆**（L35 事故）：这个 tag 会出现的位置不止「组定义 + `route.rules`」，`dns.servers[].detour` 就是一个反直觉的落点 —— `grep -c '<tag>' ` 全仓 JSON 逐个确认为止；引用的完整性由 `dns_server_detour_missing` / `domain_resolver_missing` 兜住 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -73,8 +74,8 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 
 ```
 jinx-direct     → outbound direct      ✅ 白名单放行，必须最先
-jinx-ads        → outbound AD          🚫 拦截
-awanue-ads      → outbound AD          🚫 拦截（必须排在 jinx-ads 之后）
+jinx-ads        → outbound 🚫 AD          🚫 拦截（该组出口只有 block）
+awanue-ads      → outbound 🚫 AD          🚫 拦截（必须排在 jinx-ads 之后）
 geosite-cn      → outbound direct      🚦 常规分流，必须在拦截之后
 ```
 
@@ -103,7 +104,7 @@ profiles/1.14/                ← 按内核大版本归档的可运行配置（�
   desktop-lazy.json
   android-lazy.json
   ios-lazy.json
-templates/groups.json         ← 固定分流组骨架（Proxy / AI / AD / direct / block）
+templates/groups.json         ← 固定分流组骨架（🚀 Proxy / 🤖 AI / 🚫 AD / direct / block）
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
   audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
@@ -125,9 +126,9 @@ local/                        ← 【不提交】本机真实节点配置（.git
 3. 读 profiles/<ver>/{platform}-lazy.json        # 拿骨架
 4. 按映射表把链接解成 outbound，插到出站列表
    —— ⚠️ 若用户给了一份已有配置让你改，**先做字段差异比对**（见 §0.1 铁律 0）
-5. 把 outbound tag 加进用户指定的分流组（Proxy / AI / AD）的 outbounds 数组
-   —— `Proxy` 与 `AI` **都是 urltest 组**，节点直接加进去就是加进自动测速（不再有单独的 `Auto` 组）；
-      `AI` 只放用户指定给 AI 的节点，**默认不要引用 `Proxy`**
+5. 把 outbound tag 加进用户指定的分流组（🚀 Proxy / 🤖 AI / 🚫 AD）的 outbounds 数组
+   —— `🚀 Proxy` 与 `🤖 AI` **都是 urltest 组**，节点直接加进去就是加进自动测速（不再有单独的 `Auto` 组）；
+      `🤖 AI` 只放用户指定给 AI 的节点，**默认不要引用 `🚀 Proxy`**
 6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
 7. 输出完整 JSON（不是 diff、不是片段）
 

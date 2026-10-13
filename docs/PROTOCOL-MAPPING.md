@@ -219,22 +219,22 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 
 ## 3. 插入分流组（用户指定落点）
 
-三个组位置固定，**`Proxy` 与 `AI` 都是 urltest**（不再有单独的 `Auto` 组）：
+三个组位置固定，**`🚀 Proxy` 与 `🤖 AI` 都是 urltest**（不再有单独的 `Auto` 组）：
 
 ```jsonc
-{ "type": "urltest", "tag": "Proxy", "outbounds": ["Node-01", "..."],
+{ "type": "urltest", "tag": "🚀 Proxy", "outbounds": ["Node-01", "..."],
   "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
-{ "type": "urltest", "tag": "AI",    "outbounds": ["Node-01", "Node-04"],
+{ "type": "urltest", "tag": "🤖 AI",    "outbounds": ["Node-01", "Node-04"],
   "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
-{ "type": "selector", "tag": "AD",   "outbounds": ["block", "direct"], "default": "block" }
+{ "type": "selector", "tag": "🚫 AD",   "outbounds": ["block"], "default": "block" }
 ```
 
-- 用户说"放 Proxy" → 把新节点 tag 加进 `Proxy.outbounds`。`Proxy` 是 urltest，加进去就等于加进自动测速。
-- 用户说"放 AI" → 加进 `AI.outbounds`。`AI` 也是 urltest，只放用户想给 AI 用的节点（例如全部台湾节点）；
-  **不要把 `Proxy` 放进 `AI.outbounds`** —— urltest 里嵌 urltest 会串联两次测速，两个组结果几乎一样，AI 组就失去意义。
-- **AD 组只放 `block` / `direct`，永远不把代理节点放进 AD。**
-- tag 一旦被规则集/规则引用就不能随便改名：`Proxy` `AI` `AD` `direct` `block` 是保留名。
-- `route.final` 固定指向 `Proxy`，即全局兜底走 urltest 优选。
+- 用户说"放 Proxy" → 把新节点 tag 加进 `🚀 Proxy.outbounds`。它是 urltest，加进去就等于加进自动测速。
+- 用户说"放 AI" → 加进 `🤖 AI.outbounds`。它也是 urltest，只放用户想给 AI 用的节点（例如全部台湾节点）；
+  **不要把 `🚀 Proxy` 放进 `🤖 AI.outbounds`** —— urltest 里嵌 urltest 会串联两次测速，两个组结果几乎一样，🤖 AI 组就失去意义。
+- **🚫 AD 组只放 `block`，永远不把代理节点放进 🚫 AD。**
+- tag 一旦被规则集/规则引用就不能随便改名：`🚀 Proxy` `🤖 AI` `🚫 AD` `direct` `block` 是保留名。
+- `route.final` 固定指向 `🚀 Proxy`，即全局兜底走 urltest 优选。
 - `route.auto_detect_interface` **必须是 `true`**，否则流量回灌 tun（见 `WORKFLOW.md` 的铁律一节）。
 
 ## 4. 常见解码坑
@@ -257,5 +257,5 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 3. `server` / `server_port` / 凭据三项齐全
 4. TLS 需求满足（trojan/anytls/hysteria2/tuic 必须有；vless 看 `security`）
 5. 没有 `udp` / `tfo` / `domain_strategy` 这类老字段
-6. tag 无重复、已加入目标分流组的 `outbounds`（`Proxy` 是 urltest，加进去即自动测速）
+6. tag 无重复、已加入目标分流组的 `outbounds`（`🚀 Proxy` 是 urltest，加进去即自动测速）
 7. 跑 `python tools/audit.py <profile> --platform <p> --check` 全绿

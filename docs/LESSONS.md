@@ -320,8 +320,13 @@ tag 一直是 `dns-bootstrap` / `dns-cn` / `dns-proxy`，**该门禁永远不可
 - `Proxy` / `AI` / `AD` 的 `outbounds` 里**只允许出现真实节点 tag**，不得引用其它组。
 - 骨架模板 `templates/groups.json` 里 `Proxy` / `AI` 的 `outbounds` 允许为空（占位），
   自行生成的 profile 里为空则报 WARN `empty_group_skeleton`。
+- `AD` 组的 `outbounds` **只允许 `block`**（m07194 起删掉 `direct`），`default` 必须逐字是 `"block"`。
+- 三个组的 tag 必须逐字是 `🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + **一个 ASCII 空格** + 名字）。
+  它们是 `route.final`、`route.rules[].outbound`、DNS 规则与规则集的引用目标，
+  因此写错一个字符就等价于「tag 找不到」（`check` 不报，运行时才报 `outbound not found`
+  或静默落到 `final`）；同时它也是客户端策略组列表里给用户看的显示名。
 
-**门禁**：`dup_tag`, `empty_group`, `empty_group_skeleton`, `urltest_no_url`, `final_missing`, `dangling_ref`, `group_wrong_type`, `group_nesting`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_not_urltest`, `template_ai_no_url`, `template_ad_polluted`
+**门禁**：`dup_tag`, `empty_group`, `empty_group_skeleton`, `urltest_no_url`, `final_missing`, `dangling_ref`, `group_wrong_type`, `group_nesting`, `group_tag_incomplete`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `ad_group_default_not_block`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_group_tag_incomplete`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_not_urltest`, `template_ai_no_url`, `template_ad_polluted`, `template_ad_default_not_block`
 
 ---
 
@@ -1405,7 +1410,7 @@ commit message 与本地一致」，但需要网络与远端访问，不适合�
 **现象**
 
 `templates/groups.json` 是「这份配置该有哪些分流组」的唯一声明
-（`Proxy` / `AI` / `AD` / `direct` / `block` / `direct-download`），
+（`🚀 Proxy` / `🤖 AI` / `🚫 AD` / `direct` / `block` / `direct-download`），
 三份 `profiles/1.14/*-lazy.json` 是它的实例。但在本轮梳理前：
 
 - 模板里加一个组、profile 没跟着加 → 机器全绿；
@@ -1490,6 +1495,59 @@ commit message 与本地一致」，但需要网络与远端访问，不适合�
 两边对齐 —— 所以删代码时必须同时删掉 L8 里对它的声明，否则立刻报 `lessons_missing_gate`。
 
 **涉及**：`tools/audit.py`, `docs/LESSONS.md` L8, `AGENTS.md` 铁律 19
+
+---
+
+## L35 组改名只改了「定义」，没改「引用」—— `dns.servers[].detour` 指向了不存在的出站
+
+**现象**
+
+把三个分流组改名成 `🚀 Proxy` / `🤖 AI` / `🚫 AD`（m07194）之后，
+`local/android-usai.json` 里 `outbounds[].tag`、`route.final`、`route.rules[].outbound` 都改了，
+唯独 `dns.servers[2].detour` 还写着 `"Proxy"` —— 而配置里已经没有任何出站叫 `Proxy` 了。
+
+**根因**
+
+`dns.servers[].detour` 和 `route.rules[].outbound` 一样，是**按 tag 字符串引用出站**的字段。
+改名时我按「组定义 + route 引用」列清单，没有把 `dns` 段算进引用面。
+`tools/audit.py` 当时校了 `route.rules[].outbound`（`rule_outbound_missing`）、
+`route.final`（`final_missing`）、`route.rule_set[].tag`（`rule_ruleset_missing`）、
+`dns.rules[].server`（`dns_rule_server_missing`）、`dns.rules[].rule_set`（`dns_rule_ruleset_missing`）、
+`dns.final`（`dns_final_missing`）、`outbounds[].outbounds`（`dangling_ref`）、
+`route.default_domain_resolver.server`（`ddr_missing`）——
+**唯独漏了 `dns.servers[].detour`**，而它恰好是唯一一处「组 tag 出现在 dns 段」的地方。
+
+**为什么没被拦住**
+
+1. 该字段当时没有任何门禁：所有 `detour` 相关的检查都只扫 `http_clients` 与 `route.rule_set[].download_detour`
+   （它们查的是「空 direct 出站」问题，`dangling_download_detour`），不扫 `dns.servers`。
+2. `sing-box check` 对这个错误 **exit=0**。check 只做反序列化、不做任何初始化。
+   要注意的是：**`--run` 是能抓到它的** —— 真启动时会 `FATAL start service: start dns-transport:
+   start dns/https[dns-proxy]: outbound detour not found: Proxy` 立刻退出（DNS 服务本身要挑出站，
+   这是启动期的硬依赖）。所以这一条本可以被 `--run` 拦住，只因它出现在**不进仓库的 `local/`** 里，
+   而 `--run` 在 CI 上只跑 `profiles/` 与 `templates/`。
+3. 三份 profile 是**一起**改的（都改对了），所以 `profile_drift`（查「三份不一致」）也发现不了 ——
+   这个错误只出现在不进仓库的 `local/*.json` 里，仓库门禁本来就扫不到它们。
+
+**修法**
+
+1. 修数据：`local/android.json` / `android-usai.json` / `android-A-dns-ipv4only.json` /
+   `android-B-full-ipv4.json` 四份的真节点配置逐份补改（`android.json` / A / B 各 8 处，
+   `android-usai.json` 1 处 —— 前一轮改它的 `dns` 段时漏了这一个字段）。
+2. 加门禁 **`dns_server_detour_missing`**：`dns.servers[i].detour` 必须存在于出站 tag 集合中。
+3. 同轮把「引用 dns.servers 的 tag」也补成完整清单，加门禁 **`domain_resolver_missing`**：
+   `outbounds[].domain_resolver.server` / `route.rule_set[].domain_resolver.server` /
+   `http_clients[].domain_resolver.server` 三处都必须存在于 `dns.servers[].tag` 中。
+   门禁对**空 `dns_tags` 的骨架模板**放行（`templates/groups.json` 没有 dns 段，
+   不能因为「引用了尚未声明的 DNS 服务」报错）。
+4. 一般化的纪律：**改名时的引用面清单，应当来自「这个字符串在配置里出现的所有位置」，而不是来自记忆。**
+   做法：`grep -o` 出该 tag 在全仓 JSON 里的出现次数，逐个确认；或直接用
+   `python tools/diff_config.py` 比对新旧配置。本条同时暴露了铁律 20 的注脚还不够硬。
+
+**门禁**：`dns_server_detour_missing`, `domain_resolver_missing`
+
+**涉及**：`tools/audit.py`, `local/android.json`, `local/android-usai.json`,
+`local/android-A-dns-ipv4only.json`, `local/android-B-full-ipv4.json`, `AGENTS.md` 铁律 20
 
 ---
 

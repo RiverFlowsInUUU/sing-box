@@ -112,12 +112,12 @@ docs/DECISIONS.md          决策记录（每条新功能的启用/不启用、�
 需要用户提供：
 
 1. **节点分享链接**（可多个）：`vless://…` `vmess://…` `trojan://…` `hysteria2://…` `ss://…` …
-2. **落点分流组**：`Proxy`（普通外网）、`AI`（AI 类网站走更干净的出口）、`AD`（广告拦截）
+2. **落点分流组**：`🚀 Proxy`（普通外网）、`🤖 AI`（AI 类网站走更干净的出口）、`🚫 AD`（广告拦截）
 3. **目标平台**：Android / iOS / Windows
-4. **AI 组要放哪些节点**（`AI` 与 `Proxy` 是两个独立的 urltest 组，各自在组内节点间优选；
-   用户不说就先把所有代理节点都放进去，**不要**用 `Proxy` 当子节点）
+4. **🤖 AI 组要放哪些节点**（`🤖 AI` 与 `🚀 Proxy` 是两个独立的 urltest 组，各自在组内节点间优选；
+   用户不说就先把所有代理节点都放进去，**不要**用 `🚀 Proxy` 当子节点）
 
-缺哪个就问，不要自己猜。用户只说"A 放 AI 组"，那就只动 AI 组。
+缺哪个就问，不要自己猜。用户只说"A 放 🤖 AI 组"，那就只动 🤖 AI 组。
 
 ### A2. 查版本
 
@@ -146,16 +146,20 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 从 `profiles/<版本>/<平台>-lazy.json` 拿骨架（**不要新写一份配置**），然后：
 
 1. 在 `outbounds[]` 末尾追加节点对象，`tag` 用「节点名-地区-协议」这种可读名，
-   且**不得与既有 tag 重复**（`Proxy` `AI` `AD` `direct` `block` 是保留名；`Proxy` 是 urltest 组，节点更不能占用）。
+   且**不得与既有 tag 重复**（`🚀 Proxy` `🤖 AI` `🚫 AD` `direct` `block` 是保留名；`🚀 Proxy` 是 urltest 组，节点更不能占用）。
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
-   `Proxy` 与 `AI` 都是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
-   两个组的 `outbounds` 里**只放真实节点，不要放 `Proxy` / `AI` 这类组 tag**（不嵌套）。
+   `🚀 Proxy` 与 `🤖 AI` 都是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
+   两个组的 `outbounds` 里**只放真实节点，不要放 `🚀 Proxy` / `🤖 AI` 这类组 tag**（不嵌套）。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
    其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
    `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
    **若启用了 DNS 层前置拦截**（见 `docs/DECISIONS.md` D13），`dns.rules` 里还有第二套顺序
    （白名单 → 拦截 → `geosite-cn`）需要同步维护 —— 两张表各写各的，排错即静默失效（L28）。
-4. `AD` 分组**只允许** `block` 和 `direct`，永远不要把代理节点放进去。
+4. `🚫 AD` 分组**只允许** `block`（m07194 起删掉 `direct`），永远不要把代理节点放进去。
+5. **组 tag 逐字用规范名**：`🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + 一个 ASCII 空格 + 名字）。
+   写错一个字符 = `route.final` / 规则引用全部落空（`check` 不会报）。详见 `AGENTS.md` 铁律 20。
+   理由：`direct` 这一档在去广告组里没有任何使用场景（想直连的域名就该在规则里走 `direct`），
+   而它一旦被用户选中或写成 `default`，广告就静默放行了。
 
 ### A5. 跑门禁
 
@@ -351,7 +355,7 @@ python tools/upgrade-check.py --write    # 更新上游文档快照
 | `FATAL ... http_client is conflict with deprecated download_detour field` | 两者同时出现 | 删掉 `download_detour` |
 | `FATAL ... detour to an empty direct outbound makes no sense` | **下载用的 direct 出站是空的**：只写了 `{"type":"direct","tag":"direct"}` | 给下载专用 direct（tag 固定为 `direct-download`）加 `domain_resolver`，或 `bind_interface` / `inet4_bind_address` / `routing_mark` 等任意一项。**注意：`domain_strategy` 已被 `schema:"omit"`，填了根本不会生效（而且 1.14 上写了直接 FATAL）；但 `network_strategy` 不受此限 —— 它是真字段，填了就能把出站变非空** |
 | 启动成功但某类流量走错 | 平台能力 / 规则顺序 | 查 `docs/PLATFORM-MATRIX.md`、检查 `route.rules` 顺序 |
-| 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
+| 日志刷 `connection: open connection to …: operation not permitted`，目标 IP 反复出现 | **不是故障**：这是 `block` 出站拦广告的正常输出（`protocol/block/outbound.go` 返回 `syscall.EPERM`），日志里写 `outbound/selector[🚫 AD]` 是因为打印的是本连接被选中的那层出站 —— 说明 `jinx-ads` / `awanue-ads` 命中了 | **不用改配置**。嫌刷屏就把 `log.level` 设为 `"panic"` 或 `log.disabled: true`。详见 `docs/LESSONS.md` L16 |
 | **启动成功、但完全没网**：节点全无延迟、只有上传没下载、连接数上万、内存飙到 1GB | 缺 `route.auto_detect_interface: true`：出站 socket 没被 `protect()`，回灌 tun | 在 `route` 里加 `"auto_detect_interface": true`（Android 上唯一可行的防回环手段）。`audit.py` 会报 `tun_without_auto_detect_interface` |
 | 崩溃/无日志 | 工作目录问题 | Android 看 `$working_directory/stderr.log`；Windows 看 `C:\ProgramData\sing-box-daemon` |
 | 用户说「访问境外网站还有 IPv6 请求」/ `https://ip.net.coffee/` 首页汇总里出现 IPv6 出口 IP | ⚠️ **先分清是哪一层**：① 本地往服务端递的仍是域名（`resolve` 没生效或位置不对）；② 本地递的已是 IPv4 字面量，但**服务端**自己选了 IPv6 出口 | ① 看 `route.rules` 里 `resolve` 是否紧跟 `hijack-dns`、排在第一个 route/reject 之前 —— **放末尾等于没放**（第一条 route 一命中就 `break match`）。`audit.py` 报 `resolve_not_first` / `resolve_not_ipv4_only` / `resolve_missing_ipv4_only`。② **本地配置已无能为力**，先确认那个 IPv6 是不是节点自身的 AAAA 记录；要改去服务端禁用 IPv6 出网（铁律 15）。判定方法见 `docs/LESSONS.md` L17/L18 与 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
@@ -461,5 +465,5 @@ else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 | "广告用 `category-ads-all` 就够了" | 本仓库用 Jinx (`jinx-ads`) + 秋风 (`awanue-ads`)，且**必须**配 `jinx-direct` 放行集，顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | "规则顺序无所谓" | 顺序错了等于没加。`geosite-cn` 排在拦截之前，国内广告域名会先命中直连，广告规则再无机会执行 |
 | "`cache_file.path` 可以写 `../cache/cache.db`" | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL` 起不来。写 `cache.db` |
-| "分流组越多越好" | 本仓库只要 `Proxy` / `AI` / `AD` 三个 + `direct` / `block` |
-| "让 AI 组指向 Proxy 省事" | 两个 urltest 串联后测速会互相拖累，且 AI 组失去独立优选意义；组的 `outbounds` 只放真实节点 |
+| "分流组越多越好" | 本仓库只要 `🚀 Proxy` / `🤖 AI` / `🚫 AD` 三个 + `direct` / `block` |
+| "让 🤖 AI 组指向 🚀 Proxy 省事" | 两个 urltest 串联后测速会互相拖累，且 🤖 AI 组失去独立优选意义；组的 `outbounds` 只放真实节点 |

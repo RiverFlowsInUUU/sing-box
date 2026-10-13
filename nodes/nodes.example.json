@@ -1,7 +1,7 @@
 {
   "_comment": "节点书写示例。真实节点不要提交到仓库 —— 这份文件只示范『一个节点在配置里长什么样』，以及它在哪个分流组。",
   "_how_to_use": "用户给你分享链接时，按 docs/PROTOCOL-MAPPING.md 把链接翻译成下面这种对象，追加到 profiles/<版本>/<平台>-lazy.json 的 outbounds[]，再把 tag 加进目标分流组的 outbounds 数组。",
-  "reserved_tags": ["Proxy", "AI", "AD", "direct", "block"],
+  "reserved_tags": ["🚀 Proxy", "🤖 AI", "🚫 AD", "direct", "block"],
   "tag_naming": "建议 <地区>-<协议>-<序号>，例如 hk-hysteria2-01、us-vless-reality-01。tag 里可以用 emoji，但同一配置内不得重复。",
   "examples": {
     "vless_reality": {
@@ -74,9 +74,9 @@
   },
   "grouping": {
     "_comment": "节点的 tag 要加进哪个数组，由用户指定。以下是本仓库的固定分组语义。",
-    "Proxy": "普通外网 + 全局兜底（route.final 指向它）。它本身就是 urltest 自动测速组，节点加进它就等于加进测速",
-    "AI": "AI 相关站点（geosite-ai 命中后走它）。它本身就是 urltest，把 AI 要用的节点放进来即可，不引用 Proxy",
-    "AD": "广告拦截，数组里只能是 block / direct，禁止放代理节点",
+    "🚀 Proxy": "普通外网 + 全局兜底（route.final 指向它）。它本身就是 urltest 自动测速组，节点加进它就等于加进测速",
+    "🤖 AI": "AI 相关站点（geosite-ai 命中后走它）。它本身就是 urltest，把 AI 要用的节点放进来即可，不引用 🚀 Proxy",
+    "🚫 AD": "广告拦截，数组里只能是 block（m07194 起删掉 direct），禁止放代理节点",
     "direct": "直连",
     "block": "拒绝"
   }

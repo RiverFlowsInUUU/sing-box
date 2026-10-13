@@ -421,6 +421,49 @@
 
 ---
 
+## D18 分流组 tag 加 emoji 前缀，AD 组删掉 `direct`（用户要求的显示与语义调整）
+
+- **日期**：2026-10-13
+- **触发**：用户原话「给 Proxy 改名为🚀 Proxy，给 AI 改名为🤖 AI，给 AD 改名为 🚫 AD，
+  同时 AD 组只要 block 作为出口删掉 direct」。
+- **决策**：① 三个固定组的 tag 由 `Proxy` / `AI` / `AD` 改为 `🚀 Proxy` / `🤖 AI` / `🚫 AD`；
+  ② `🚫 AD` 的 `outbounds` 由 `["block", "direct"]` 收成 `["block"]`，`default` 仍是 `"block"`。
+- **矩阵 ID**：（基础设施类，不进 `version-matrix.json`）
+- **为什么**：
+  1. **tag 就是显示名**：三个组的 tag 直接出现在 sing-box 客户端的策略组列表里，
+     与节点 tag（`🇺🇸 US AI` 这种 emoji 形状）混在一起时，裸 ASCII 的 `Proxy` / `AI` / `AD`
+     在列表里看不出「这是组而不是节点」，也一眼分不出哪个是广告组。
+  2. **tag 是引用目标**：`route.final`、`route.rules[].outbound`、`dns.rules[].server` 都按字符串引用，
+     写错一个字符就是「找不到」（`check` 不报）。所以改 tag 必须端到端改，
+     且必须有门禁盯着 —— 这正是 `group_tag_incomplete` / `template_group_tag_incomplete` 的由来。
+  3. **AD 里的 `direct` 是纯风险、零收益**：AD 组只在「广告规则命中」时被路由到，
+     想直连的域名本来就该在 `route.rules` 里走 `direct`，不需要在 AD 组里放一个「放行档」；
+     而 `direct` 一旦被用户手选、或被写成 `default`，就是**全部广告静默直连**。
+     删掉它以后 AD 组的语义变成「命中即拦」，不可能被误配成放行。
+- **备选方案**：
+  - **保留 `Proxy` / `AI` / `AD` 的字面 tag，另用客户端侧的「显示名」功能改名**。
+    否决：仓库是跨客户端（SFA / SFI / SFM / SFT / SFW）的配置源，显示名属于客户端 UI 能力，
+    配置里没有跨平台字段可写；改 tag 是唯一端到端有效的做法。
+  - **AD 组保留 `direct` 作为「临时放行」开关**。否决：见上第 3 点；要临时放行应当改规则，
+    而不是在拦截组里留一个会让全部广告静默放行的档位。
+- **前提 / 风险**：
+  - 改 tag 是**破坏性变更**：本地既有配置（`local/` 下未入库的那几份）与新配置的
+    `route.final` / 规则引用 / `cache` 命名会对不上，必须同步改（本轮已改 `local/android-usai.json`）。
+  - 客户端里的旧策略组选择会失效（用户之前若手动选过 `AD`，改 tag 后会回到 `default`）。
+  - 门禁覆盖：`group_tag_incomplete`（配置侧）+ `template_group_tag_incomplete`（模板侧）
+    盯 emoji 形态；`ad_group_polluted` / `template_ad_polluted` / `ad_group_default_not_block` /
+    `template_ad_default_not_block` 盯「AD 只留 block」；`matrix_platform_stale` 中若登记了组相关行会一并兜底。
+- **事后补记（同轮发现的漏改，2026-10-13）**：本决策执行后核查发现，
+  仓库外 `local/` 下四份运行配置里 `dns.servers[].detour` 这一处引用被漏改
+  （`local/android-usai.json` 的 `dns-proxy` 仍指向已不存在的 `Proxy`）。
+  这是**引用面清单不完整**造成的：`route.rules[].outbound` 改了，`dns.servers[].detour` 没改。
+  `sing-box check` 对此 exit=0，只有真启动才 FATAL（`start dns-transport: ... outbound detour not found`）。
+  已修数据并新增门禁 `dns_server_detour_missing`（`dns.servers[].detour` 必须在出站 tag 集合中）
+  与 `domain_resolver_missing`（`outbounds[]` / `route.rule_set[]` / `http_clients[]` 的
+  `domain_resolver.server` 必须在 `dns.servers[].tag` 中）。完整复盘见 `docs/LESSONS.md` L35。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更 |
@@ -435,3 +478,5 @@
 | 2026-10-13 | 新增 D15（DNS 层广告拦截推广进三份 profile，route 层保留兜底） |
 | 2026-10-13 | 新增 D16（平台差异矩阵上锁：matrix_platform_stale / profile_drift / 模板覆盖对账，见 L32、L33） |
 | 2026-10-13 | 新增 D17（删除桌面端 `clash_api` 空壳；只写 `default_mode` 既不监听也不分流，却创建统计组件） |
+| 2026-10-13 | 新增 D18（组 tag emoji 化 `🚀 Proxy` / `🤖 AI` / `🚫 AD`；AD 组删掉 `direct` 只留 `block`） |
+| 2026-10-13 | D18 事后补记 + 新增门禁 `dns_server_detour_missing` / `domain_resolver_missing`（组改名时 `dns.servers[].detour` 漏改，见 L35） |

@@ -330,8 +330,8 @@ def _audit_jinx(route, rep: Report):
 
     官方要求（https://github.com/RiverFlowsInUUU/Jinx#-规则顺序）：
         1 jinx-direct   → direct  白名单先放行
-        2 jinx-ads      → AD      拦截
-        3 awanue-ads    → AD      拦截（秋风判定不同，会拦掉 Jinx 白名单的 8 个域，必须排后面）
+        2 jinx-ads      → AD 组   拦截（AD 的唯一出口是 block）
+        3 awanue-ads    → AD 组   拦截（秋风判定不同，会拦掉 Jinx 白名单的 8 个域，必须排后面）
         4 geosite-cn    → direct  常规分流，必须排在拦截之后
     """
     rss = route.get("rule_set") or []
@@ -368,7 +368,7 @@ def _audit_jinx(route, rep: Report):
                 f"route.rule_set[{i}] ({tag}) 必须是 format='source'（Jinx 发布的是 JSON 源格式，非 .srs）",
             )
 
-    # route 层：广告拦截集只能落到 AD 组或直接 reject
+    # route 层：广告拦截集只能落到 AD 组（唯一出口是 block）或直接 reject
     #     （DNS 层另有一套约束，见 _audit_dns_adblock / docs/LESSONS.md L28）
     for i, r in enumerate((route.get("rules") or [])):
         if not isinstance(r, dict):
@@ -376,11 +376,11 @@ def _audit_jinx(route, rep: Report):
         for t in ("jinx-ads", "awanue-ads"):
             if t in (r.get("rule_set") or []):
                 ob = r.get("outbound")
-                if ob != "AD" and r.get("action") != "reject":
+                if ob != GROUP_AD and r.get("action") != "reject":
                     rep.error(
                         "jinx_ads_target",
                         f"route.rules[{i}] 把 {t} 指向了 {ob or r.get('action')!r}，"
-                        "广告拦截集只能落到 AD 组或直接 reject",
+                        f"广告拦截集只能落到 {GROUP_AD} 组或直接 reject",
                     )
 
     # 顺序：直接用 rule_set 在 route.rules 里的首次出现位置判定
@@ -689,7 +689,7 @@ def audit_repo_rules(cfg, rep: Report):
         if o.get("type") == "urltest" and not o.get("url"):
             rep.error("urltest_no_url", f"outbounds[{i}] ({o.get('tag')}) 是 urltest 但没有 url")
 
-    # 3a) 组的类型与嵌套：Proxy / AI 必须是 urltest，AD 必须是 selector；组的 outbounds 里只放真实节点
+    # 3a) 组的类型与嵌套：见 GROUP_TYPES_REQUIRED；组的 outbounds 里只放真实节点
     for i, o in enumerate(outs):
         if not isinstance(o, dict):
             continue
@@ -698,7 +698,7 @@ def audit_repo_rules(cfg, rep: Report):
             rep.error(
                 "group_wrong_type",
                 f"outbounds[{i}] ({o.get('tag')}) 必须是 {want}（当前 {o.get('type')}）："
-                "Proxy 与 AI 是两个独立优选组、各自 urltest；AD 是 selector",
+                f"{GROUP_PROXY} 与 {GROUP_AI} 是两个独立优选组、各自 urltest；{GROUP_AD} 是 selector",
             )
         if o.get("tag") not in NO_NESTING_GROUPS:
             continue
@@ -708,7 +708,31 @@ def audit_repo_rules(cfg, rep: Report):
                 "group_nesting",
                 f"outbounds[{i}] ({o.get('tag')}) 引用了其它分流组 {nested}："
                 "组的 outbounds 里只允许放真实节点，嵌套 urltest 会串联两次测速"
-                "（m02132 用户要求 AI 直接是 urltest + 台湾节点，不要 Proxy 作子节点）",
+                f"（m02132 用户要求 {GROUP_AI} 直接是 urltest + 台湾节点，不要 {GROUP_PROXY} 作子节点）",
+            )
+
+    # 3bis) 三个组的 tag 必须逐字等于规范名（emoji + 一个空格 + 名字）。
+    # 它们是 route.final、route.rules[].outbound、DNS 规则与规则集的引用目标，
+    # 一个字符不同就等价于「tag 找不到」；同时它也是客户端策略组列表里的显示名。
+    for i, o in enumerate(outs):
+        if isinstance(o, dict) and o.get("tag") in GROUP_TAGS:
+            if not GROUP_TAG_RE.match(o["tag"]):
+                rep.error(
+                    "group_tag_incomplete",
+                    f"outbounds[{i}] 的分流组 tag {o['tag']!r} 不是「emoji + 一个 ASCII 空格 + 名字」的形式；"
+                    f"规范名是 {GROUP_TAGS}",
+                )
+
+    # ⚠️ 这里按 *裸 ASCII* 的旧名反查（"Proxy" / "AI" / "AD"），
+    # 而不是在 GROUP_TAGS 里找 —— 漏改的结果恰恰是「tag 退回了旧名」，
+    # 在集合里根本发现不了（与 audit_platform_caps 里同一门禁互补）。
+    legacy = {"Proxy", "AI", "AD"}
+    for i, o in enumerate(outs):
+        if isinstance(o, dict) and o.get("tag") in legacy:
+            rep.error(
+                "group_tag_incomplete",
+                f"outbounds[{i}] 的分流组 tag {o['tag']!r} 是旧名（裸 ASCII）："
+                f"规范名必须逐字是 {GROUP_TAGS}",
             )
 
     final = route.get("final")
@@ -739,8 +763,39 @@ def audit_repo_rules(cfg, rep: Report):
             "ddr_missing",
             f"route.default_domain_resolver.server = {ddr['server']!r} 不在 dns.servers 中",
         )
+    # 3b-bis) 出站 / 规则集 / HTTP 客户端的 domain_resolver.server 也是引用 dns.servers 的 tag。
+    #          ⚠️ 骨架模板（templates/groups.json）没有 dns 段，此时 dns_tags 为空，
+    #          不能把「引用了尚未声明的 DNS 服务」当成错误 —— 只有定义了 dns.servers 才校验。
+    #          写错了 sing-box check 依旧 exit=0（它只反序列化、不做任何初始化）；
+    #          真跑起来那条出站就解析不了自己的 server 域名。
+    if dns_tags:
+        # 三个位置都挂 domain_resolver：出站自身、规则集下载、HTTP 客户端。
+        holders = [(f"outbounds[{i}]", o.get("tag"), o.get("domain_resolver")) for i, o in enumerate(outs) if isinstance(o, dict)]
+        holders += [(f"route.rule_set[{i}]", rs.get("tag"), rs.get("domain_resolver"))
+                    for i, rs in enumerate(route.get("rule_set", [])) if isinstance(rs, dict)]
+        holders += [(f"http_clients[{i}]", hc.get("tag"), hc.get("domain_resolver"))
+                    for i, hc in enumerate(cfg.get("http_clients", []) or []) if isinstance(hc, dict)]
+        for where, tag, dr in holders:
+            if isinstance(dr, dict) and dr.get("server") and dr["server"] not in dns_tags:
+                rep.error(
+                    "domain_resolver_missing",
+                    f"{where} ({tag}) 的 domain_resolver.server = {dr['server']!r} 不在 dns.servers 中",
+                )
 
     # 3c) DNS 规则与服务引用完整性
+    #     ⚠️ dns.servers[].detour 也在这里校 —— 它同样是「tag 拼写错了也不报错」的引用：
+    #     组改名（铁律 20）时漏改 detour，dns-proxy 就会指向一个不存在的出站。
+    #     sing-box check 对此 exit=0，只有真跑起来才会在查解析阶段默默退化。
+    for i, s in enumerate(cfg.get("dns", {}).get("servers", [])):
+        if not isinstance(s, dict):
+            continue
+        dt = s.get("detour")
+        if dt and dt not in tagset:
+            rep.error(
+                "dns_server_detour_missing",
+                f"dns.servers[{i}] ({s.get('tag')}) 的 detour = {dt!r} 不在出站列表中"
+                "（sing-box check 不校验这个）",
+            )
     for i, rule in enumerate(cfg.get("dns", {}).get("rules", [])):
         if not isinstance(rule, dict):
             continue
@@ -760,26 +815,27 @@ def audit_repo_rules(cfg, rep: Report):
     if dns_final and dns_final not in dns_tags:
         rep.error("dns_final_missing", f"dns.final = {dns_final!r} 不在 dns.servers 中")
 
-    # 4) AD 组只能放 block / direct；默认值必须是 block，否则整个去广告链路静默失效
+    # 4) AD 组只能放 block（m07194：删掉 direct）；默认值必须是 block，否则整个去广告链路静默失效
     for i, o in enumerate(outs):
         if not isinstance(o, dict):
             continue
-        if o.get("tag") != "AD":
+        if o.get("tag") != GROUP_AD:
             continue
         if o.get("type") == "selector":
-            bad = [r for r in (o.get("outbounds") or []) if r not in ("block", "direct")]
+            bad = [r for r in (o.get("outbounds") or []) if r not in GROUP_AD_OUTBOUNDS]
             if bad:
                 rep.error(
                     "ad_group_polluted",
-                    f"AD 分流组包含非 block/direct 出站：{bad}；广告拦截组不得放入代理节点",
+                    f"{GROUP_AD} 分流组只能放 {GROUP_AD_OUTBOUNDS}，不能放 {bad}；"
+                    f"广告拦截组不得放入代理节点，也不要放 direct（m07194：{GROUP_AD} 只要 {GROUP_AD_DEFAULT} 作出口）",
                 )
             # 详见 docs/LESSONS.md L17：default 被改成 direct（或写了个不存在的 tag）时，
-            # 规则照样命中 AD，但连接被放行 —— 没有任何报错，广告静默漏过。
-            if o.get("default") != "block":
+            # 规则照样命中 AD 组，但连接被放行 —— 没有任何报错，广告静默漏过。
+            if o.get("default") not in (None, GROUP_AD_DEFAULT):
                 rep.error(
                     "ad_group_default_not_block",
-                    f"AD 分流组的 default = {o.get('default')!r}，必须是 \"block\"："
-                    "广告规则命中 AD 后若默认出站不是 block，广告会静默直连放行",
+                    f"{GROUP_AD} 分流组的 default = {o.get('default')!r}，必须是 \"{GROUP_AD_DEFAULT}\"："
+                    f"广告规则命中 {GROUP_AD} 组后若默认出站不是 block，广告会静默直连放行",
                 )
 
     # 4b) 用 block 出站拦广告时，日志级别会被 ERROR 刷屏（见 docs/LESSONS.md L16）
@@ -793,7 +849,7 @@ def audit_repo_rules(cfg, rep: Report):
             rep.info(
                 "ads_block_log_noise",
                 f"log.level = {level!r}（未被 disabled）：block 出站每拦一次连接会写一条 INFO "
-                "+ 一条 ERROR（... using outbound/selector[AD]: operation not permitted）。"
+                f"+ 一条 ERROR（... using outbound/selector[{GROUP_AD}]: operation not permitted）。"
                 "这是拦截成功的正常现象、不是故障；嫌吵可把 log.level 设为 \"panic\" "
                 "或 log.disabled=true（详见 docs/LESSONS.md L16）",
             )
@@ -837,7 +893,7 @@ def audit_repo_rules(cfg, rep: Report):
     # 6b) resolve 必须在第一个 route/reject/hijack-dns/bypass 之前（见 docs/LESSONS.md L18）
     #     源码 route/route.go:670-705：只有 route / reject / hijack-dns / bypass 才 `break match`，
     #     resolve 是「继续匹配」的中间动作。所以放在末尾的 resolve **只会作用于前面所有规则都没命中的流量**
-    #     （即最终落到 final 的那部分）。任何走 route(AI)/route(AD)/route(direct) 的连接
+    #     （即最终落到 final 的那部分）。任何走 route(AI 组)/route(AD 组)/route(direct) 的连接
     #     都带着域名发给代理服务端，服务端可以自己选 IPv6 —— 这正是「配了 ipv4_only 却仍看到 IPv6 出口」的原因。
     if resolve_rules:
         rules = route.get("rules", [])
@@ -863,18 +919,30 @@ def audit_repo_rules(cfg, rep: Report):
                 f"route.rules[{first_resolve}] 是 resolve，但它排在 route.rules[{first_blocking}] "
                 f"（{rules[first_blocking].get('action') or '条件规则默认 route'}）之后："
                 "首个 route/reject/hijack-dns/bypass 命中即 break match，后面的 resolve 永远不会执行，"
-                "命中 AI/AD/direct 的域名仍会被原样交给代理服务端解析（服务端可用 IPv6 出口）。"
+                "命中 AI 组/AD 组/direct 的域名仍会被原样交给代理服务端解析（服务端可用 IPv6 出口）。"
                 "resolve 必须紧跟 hijack-dns，排在所有 route/reject 之前（详见 docs/LESSONS.md L18）",
             )
 
 
 GROUP_TYPES = ("selector", "urltest", "block", "dns")
+# 分流组 tag。**这就是配置里真实出现的字符串，含 emoji 与一个空格**——
+# 改动它等于改动所有 profile / 模板 / 规则 / DNS detour / route.final，
+# 且旧配置（含本地未提交的那几份）会与新配置的 cache 与规则命名对不上。
+GROUP_PROXY = "🚀 Proxy"
+GROUP_AI = "🤖 AI"
+GROUP_AD = "🚫 AD"
 # 分流组（骨架 tag 固定），任何一个配置文件都不得出现同名 tag 的重复语义
-GROUP_TAGS = ("Proxy", "AI", "AD")
+GROUP_TAGS = (GROUP_PROXY, GROUP_AI, GROUP_AD)
 # 组的 outbounds 里只允许出现真实节点，不允许嵌套组（urltest 套 urltest 会串联两次测速）
 NO_NESTING_GROUPS = GROUP_TAGS
 # 固定组的类型不允许被改（m02132：AI 与 Proxy 一样是 urltest，不再是指向 Proxy 的 selector）
-GROUP_TYPES_REQUIRED = {"Proxy": "urltest", "AI": "urltest", "AD": "selector"}
+GROUP_TYPES_REQUIRED = {GROUP_PROXY: "urltest", GROUP_AI: "urltest", GROUP_AD: "selector"}
+# AD 组只允许一个出口（m07194）：block。direct 曾被放在这里作为「放行」档，
+# 但它会让 AD 组变成一个用户看不出差别的开关，且任何误选都会让广告静默直连。
+GROUP_AD_OUTBOUNDS = ("block",)
+GROUP_AD_DEFAULT = "block"
+# 每个组 tag 必须由一个「emoji + 一个 ASCII 空格 + 名字」构成：这是显示层面的约定（门禁 group_tag_incomplete）
+GROUP_TAG_RE = re.compile(r"^[^\x00-]+ [A-Za-z0-9]+$")
 
 
 def audit_loopback_guard(cfg, rep: Report):
@@ -921,7 +989,7 @@ def audit_template(rep: Report):
     """校 templates/groups.json（固定分流组骨架）。
 
     这份文件是每个 profile 的出站骨架，它自身写错了，生成的配置就会集体写错。
-    重点：Proxy 必须是 urltest（m01246 起不再有单独的 Auto 组）。
+    重点：Proxy 必须是 urltest（m01246 起不再有单独的 Auto 组）；组 tag 必须带 emoji 前缀。
     """
     path = ROOT / "templates" / "groups.json"
     if not path.exists():
@@ -934,34 +1002,58 @@ def audit_template(rep: Report):
         return
     outbounds = tpl.get("outbounds") or []
     by_tag = {ob.get("tag"): ob for ob in outbounds if isinstance(ob, dict)}
-    required = ("Proxy", "AI", "AD", "direct", "block", "direct-download")
+    required = (*GROUP_TAGS, "direct", "block", "direct-download")
     for tag in required:
         if tag not in by_tag:
             rep.error("template_group_missing", f"templates/groups.json 缺固定组 `{tag}`")
     if "Auto" in by_tag:
         rep.error(
             "template_legacy_auto",
-            "templates/groups.json 里仍有 `Auto` 组：Proxy 本身就是 urltest，不再需要单独的 Auto",
+            f"templates/groups.json 里仍有 `Auto` 组：{GROUP_PROXY} 本身就是 urltest，不再需要单独的 Auto",
         )
-    proxy = by_tag.get("Proxy")
+    proxy = by_tag.get(GROUP_PROXY)
     if proxy and proxy.get("type") != "urltest":
         rep.error(
             "template_proxy_not_urltest",
-            f"Proxy 必须是 urltest（当前 {proxy.get('type')}）——它是全局默认出口与兜底",
+            f"{GROUP_PROXY} 必须是 urltest（当前 {proxy.get('type')}）——它是全局默认出口与兜底",
         )
     if proxy and not proxy.get("url"):
-        rep.error("template_proxy_no_url", "Proxy (urltest) 必须有 url，否则节点测速无意义")
-    ai = by_tag.get("AI")
+        rep.error("template_proxy_no_url", f"{GROUP_PROXY} (urltest) 必须有 url，否则节点测速无意义")
+    ai = by_tag.get(GROUP_AI)
     if ai and ai.get("type") != "urltest":
         rep.error(
             "template_ai_not_urltest",
-            f"AI 必须是 urltest（当前 {ai.get('type')}）——它与 Proxy 是两个独立的优选组",
+            f"{GROUP_AI} 必须是 urltest（当前 {ai.get('type')}）——它与 {GROUP_PROXY} 是两个独立的优选组",
         )
     if ai and not ai.get("url"):
-        rep.error("template_ai_no_url", "AI (urltest) 必须有 url，否则节点测速无意义")
-    ad = by_tag.get("AD")
-    if ad and set(ad.get("outbounds") or []) - {"block", "direct"}:
-        rep.error("template_ad_polluted", "AD 只允许 block / direct")
+        rep.error("template_ai_no_url", f"{GROUP_AI} (urltest) 必须有 url，否则节点测速无意义")
+    ad = by_tag.get(GROUP_AD)
+    if ad and set(ad.get("outbounds") or []) - set(GROUP_AD_OUTBOUNDS):
+        rep.error(
+            "template_ad_polluted",
+            f"{GROUP_AD} 只允许 {GROUP_AD_OUTBOUNDS}（m07194：删掉 direct）",
+        )
+    # 模板里的组 tag 也必须逐字带 emoji：走到这里说明 tag 已经不可比对，
+    # 报一句人看得懂的「你写的是旧名」，比只报「缺固定组」更省排查时间。
+    for ob in outbounds:
+        if isinstance(ob, dict) and ob.get("tag") in {"Proxy", "AI", "AD"}:
+            rep.error(
+                "template_group_tag_incomplete",
+                f"templates/groups.json 里的组 tag {ob['tag']!r} 是旧名（裸 ASCII）："
+                f"规范名必须逐字是 {GROUP_TAGS}",
+            )
+
+    if ad and ad.get("default") not in (None, GROUP_AD_DEFAULT):
+        rep.error("template_ad_default_not_block", f"{GROUP_AD} 的 default 必须是 block")
+
+    # 三个骨架组的 tag 必须「emoji + 空格 + 名字」——它是给用户看的显示名，
+    # 写成裸 ASCII（Proxy/AI/AD）会直接暴露在 sing-box 客户端的策略组列表里。
+    for tag in GROUP_TAGS:
+        if not GROUP_TAG_RE.match(tag):
+            rep.error(
+                "template_group_tag_incomplete",
+                f"分流组 tag {tag!r} 不是「emoji + 一个 ASCII 空格 + 名字」的形式",
+            )
 
 
 def audit_platform_caps(cfg, rep: Report, platforms):
@@ -1007,6 +1099,15 @@ def audit_platform_caps(cfg, rep: Report, platforms):
                 "apple_engine_on_universal",
                 f"http_clients[{i}].engine = 'apple' 只在 Apple 平台可用，"
                 f"当前平台 {'/'.join(sorted(platforms))} 会解析失败——要用就做成 Apple 专用 profile",
+            )
+    # 组 tag 必须逐字带 emoji 前缀（铁律 20）。矩阵对账只能发现「三份互不一致」，
+    # 三份一起被改成裸 ASCII 时矩阵也无能为力 —— 所以这里再兜一道。
+    for i, o in enumerate(cfg.get("outbounds", []) or []):
+        if isinstance(o, dict) and o.get("tag") in {"Proxy", "AI", "AD"}:
+            rep.error(
+                "group_tag_incomplete",
+                f"outbounds[{i}] 的分流组 tag {o['tag']!r} 是旧名（裸 ASCII）："
+                f"规范名必须逐字是 {GROUP_TAGS}",
             )
 
 

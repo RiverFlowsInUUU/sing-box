@@ -22,7 +22,7 @@
         "tag": "dns-proxy",
         "server": "8.8.8.8",
         "path": "/dns-query",
-        "detour": "Proxy"
+        "detour": "🚀 Proxy"
       }
     ],
     "rules": [
@@ -169,7 +169,7 @@
     },
     {
       "type": "urltest",
-      "tag": "Proxy",
+      "tag": "🚀 Proxy",
       "outbounds": [
         "Node-01",
         "Node-02",
@@ -183,7 +183,7 @@
     },
     {
       "type": "urltest",
-      "tag": "AI",
+      "tag": "🤖 AI",
       "outbounds": [
         "Node-01",
         "Node-02",
@@ -197,10 +197,9 @@
     },
     {
       "type": "selector",
-      "tag": "AD",
+      "tag": "🚫 AD",
       "outbounds": [
-        "block",
-        "direct"
+        "block"
       ],
       "default": "block"
     },
@@ -254,21 +253,21 @@
           "jinx-ads"
         ],
         "action": "route",
-        "outbound": "AD"
+        "outbound": "🚫 AD"
       },
       {
         "rule_set": [
           "awanue-ads"
         ],
         "action": "route",
-        "outbound": "AD"
+        "outbound": "🚫 AD"
       },
       {
         "rule_set": [
           "geosite-ai"
         ],
         "action": "route",
-        "outbound": "AI"
+        "outbound": "🤖 AI"
       },
       {
         "rule_set": [
@@ -292,7 +291,7 @@
         "outbound": "direct"
       }
     ],
-    "final": "Proxy",
+    "final": "🚀 Proxy",
     "auto_detect_interface": true,
     "default_domain_resolver": {
       "server": "dns-bootstrap"
