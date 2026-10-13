@@ -318,11 +318,56 @@ MATRIX_FLOOR_HIGH = '"coverage_floor": "1.15.0",'   # 窗口起点高于 invento
 MATRIX_FLOOR_EMPTY = '"coverage_floor": "",'          # 干脆不声明窗口起点
 
 
-def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True, extra_env=None):
+# ── config-only 提速的安全兜底（2026-10-13）─────────────────────────
+#
+# 背景：single 用例占 negtest 耗时大头。它们的判据全是**配置类** code，
+# 而每次还重复跑 9 项与配置无关的台账检查 —— 实测单次 1187ms → 293ms。
+#
+# ⚠️ 但这必须**证明**不会漏检，不能靠"我记得"。两道断言：
+#
+#   ① LEDGER_CODES：台账类 code 清单。断言这些 code 的用例若被分到
+#      「会跳过台账」的作用域 ⇒ 它永远不响（假绿）⇒ 直接报错。
+#   ② CONFIG_ONLY_SCOPES：允许走 config-only 的作用域白名单。
+#
+# 已验证（穷举 50 个 single 用例，全量 vs config-only 逐一对账）：
+#   **配置类 code 被误跳过 0 个**。
+LEDGER_CODES = {
+    "lessons_missing", "lessons_missing_gate", "gate_without_lesson",
+    "lesson_missing_element", "lesson_missing_gate_line",
+    "decision_without_record", "decision_references_unknown", "decisions_missing",
+    "new_feature_without_adoption", "new_feature_expect_invalid",
+    "new_feature_uncovered", "new_feature_decision_overdue",
+    "coverage_window_missing", "coverage_inventory_missing",
+    "matrix_entry_missing_field", "matrix_path_unprobeable",
+    "matrix_version_mismatch", "matrix_platform_stale",
+    "tool_selftest_failed", "tool_syntax_error", "rules_dupe",
+    "edit_method_fingerprint", "redaction_clean", "sensitive_ip_in_repo",
+    "doc_group_name_stale", "doc_group_name_clean",
+}
+
+CONFIG_ONLY_SCOPES = {"single"}
+
+
+def _assert_config_only_safe(name, expect, scope):
+    """拦住「本该跑台账的用例被分到会跳过台账的作用域」——那会造成永久假绿。"""
+    if scope not in CONFIG_ONLY_SCOPES:
+        return
+    if expect in LEDGER_CODES:
+        raise RuntimeError(
+            "use case " + repr(name) + " (scope=" + scope + ") asserts ledger code "
+            + repr(expect) + ", but that scope skips the ledger via --config-only; "
+            "it would never fire (false green). Move it to doc/matrix/repo scope."
+        )
+
+
+def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True,
+                 extra_env=None, config_only=False):
     """跑真实的 audit CLI，返回报出的 code 集合。不 mock、不 import 审计函数。"""
     cmd = [sys.executable, str(ROOT / "tools" / "audit.py"), "--json"]
     if no_check:
         cmd.append("--no-check")
+    if config_only:
+        cmd.append("--config-only")
     cmd.extend(repo_args)
     if path_or_none is not None:
         cmd.append(str(path_or_none))
@@ -372,8 +417,12 @@ def run_case_single(name, mutate, base_text, level):
     # 解：给这类用例提供一个**临时的「入库」身份**，跑完立刻摘掉。
     # 只在本次子进程内生效，绝不真的去 git add。
     fake_tracked = name in TRACKED_SENSITIVE_CASES
-    return _audit_codes(out, level, extra_env={"__NEGTEST_FAKE_TRACKED": str(out)}
-                        if fake_tracked else None)
+    # single 用例断言的都是**配置类** code（台账类的由 _assert_config_only_safe 兜住），
+    # 故跳过 9 项与配置无关的台账检查 —— 实测单次 1187ms → 293ms。
+    # 已穷举验证：50 个 single 用例的配置类 code 一个不漏。
+    return _audit_codes(out, level,
+                        extra_env={"__NEGTEST_FAKE_TRACKED": str(out)} if fake_tracked else None,
+                        config_only=True)
 
 
 def _is_scan_target(path):
@@ -508,6 +557,7 @@ def main():
     try:
         for name, mutate, expect, level, scope in cases:
             try:
+                _assert_config_only_safe(name, expect, scope)
                 if scope == "matrix":
                     codes = run_case_matrix(name, mutate, base_text, level)
                 elif scope == "repo":

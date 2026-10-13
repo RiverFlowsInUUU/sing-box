@@ -3034,6 +3034,13 @@ def main():
     ap.add_argument("--singbox", default=None, help="sing-box 可执行文件路径")
     ap.add_argument("--no-check", action="store_true", help="跳过 sing-box check")
     ap.add_argument(
+        "--config-only",
+        action="store_true",
+        help="跳过**纯台账**检查（9 项，不读 profiles 的那些）。"
+             "仅供负向回归提速；**交付/提交一律跑全量**——"
+             "check-all.sh 的 [1/5] 步就是全量审计，台账不会漏",
+    )
+    ap.add_argument(
         "--run",
         action="store_true",
         help="额外真跑一次 sing-box run，抓 check 看不见的启动期 FATAL（如空 direct 出站）。"
@@ -3059,7 +3066,8 @@ def main():
     targets = []
     failed = False
     lessons_rep = Report("docs/LESSONS.md")
-    audit_lessons(lessons_rep)
+    if not args.config_only:
+        audit_lessons(lessons_rep)
     if lessons_rep.items and not args.json:
         for lv, code, msg, where in lessons_rep.items:
             print(f"[{lv[0]}] docs/LESSONS.md: {msg}" + (f"   ← {where}" if where else ""))
@@ -3068,7 +3076,8 @@ def main():
 
     # 新功能采纳台账是仓库级校验（不依赖具体配置），单独跑一次
     newfeat_rep = Report("docs/version-matrix.json")
-    audit_new_features(newfeat_rep, matrix, version)
+    if not args.config_only:
+        audit_new_features(newfeat_rep, matrix, version)
     if newfeat_rep.items and not args.json:
         for lv, code, msg, where in newfeat_rep.items:
             print(f"[{lv[0]}] docs/version-matrix.json: {msg}" + (f"   ← {where}" if where else ""))
@@ -3077,7 +3086,8 @@ def main():
 
     # 决策记录 ↔ 矩阵双向校验（同上，与具体配置无关）
     decisions_rep = Report("docs/DECISIONS.md")
-    audit_decisions(decisions_rep, matrix, version)
+    if not args.config_only:
+        audit_decisions(decisions_rep, matrix, version)
     if decisions_rep.items and not args.json:
         for lv, code, msg, where in decisions_rep.items:
             print(f"[{lv[0]}] docs/DECISIONS.md: {msg}")
@@ -3086,7 +3096,8 @@ def main():
 
     # 新功能覆盖窗口：floor 与「已盘点版本」必须对得上
     covwin_rep = Report("docs/version-matrix.json（覆盖窗口）")
-    audit_coverage_window(covwin_rep, matrix, version)
+    if not args.config_only:
+        audit_coverage_window(covwin_rep, matrix, version)
     if covwin_rep.items and not args.json:
         for lv, code, msg, where in covwin_rep.items:
             print(f"[{lv[0]}] 覆盖窗口: {msg}" + (f"   ← {where}" if where else ""))
@@ -3095,7 +3106,8 @@ def main():
 
     # 防泄漏扫查（同上，与具体配置无关）：被跟踪文件里不许有未审阅的公网 IP
     redact_rep = Report("仓库防泄漏扫查（git ls-files）")
-    audit_redaction(redact_rep)
+    if not args.config_only:
+        audit_redaction(redact_rep)
     if redact_rep.items and not args.json:
         for lv, code, msg, where in redact_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
@@ -3105,7 +3117,8 @@ def main():
     # 工具自检（同上，与具体配置无关）：工具也是代码，语法错与不变量失效同样要拦。
     # 只管 ERROR 不管 WARN：本机没有 sing-box 时 --run 会降级为 WARN，那是预期行为。
     tools_rep = Report("tools/*.py 自检")
-    audit_tools(tools_rep)
+    if not args.config_only:
+        audit_tools(tools_rep)
     if tools_rep.items and not args.json:
         for lv, code, msg, where in tools_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
@@ -3114,7 +3127,8 @@ def main():
 
     # 模板文字（同上）：`_rules_of_thumb` 是全文唯一无人消费的部分，最易过期。
     tpl_rep = Report("templates/groups.json 文字")
-    audit_template_text(tpl_rep)
+    if not args.config_only:
+        audit_template_text(tpl_rep)
     if tpl_rep.items and not args.json:
         for lv, code, msg, where in tpl_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
@@ -3124,7 +3138,8 @@ def main():
     # 散文里的旧组名残留（仓库级）：见 audit_doc_group_names 的 docstring。
     # 组改名的真实成本 98% 在散文（240 处 / 19 个文件），此前零门禁。
     doc_rep = Report("全仓散文的组名")
-    audit_doc_group_names(doc_rep)
+    if not args.config_only:
+        audit_doc_group_names(doc_rep)
     if doc_rep.items and not args.json:
         for lv, code, msg, where in doc_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
@@ -3152,7 +3167,8 @@ def main():
     # 矩阵 path 与内核「字段实际是否存在」的交叉对账（仓库级、与具体配置无关）。
     # 这是「内核升级导致门禁失效」的检测器：矩阵与内核任何一边变了，这里都会响。
     probe_rep = Report("docs/version-matrix.json path ⟺ 内核")
-    audit_matrix_paths(probe_rep, matrix, version, None if args.no_check else find_singbox(args.singbox))
+    if not args.config_only:
+        audit_matrix_paths(probe_rep, matrix, version, None if args.no_check else find_singbox(args.singbox))
     if probe_rep.items and not args.json:
         for lv, code, msg, where in probe_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
