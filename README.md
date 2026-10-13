@@ -50,6 +50,7 @@ python tools/mknode.py 'vless://...' --platform ios --group proxy
 | [`docs/TEMPLATE_MIGRATION.md`](docs/TEMPLATE_MIGRATION.md) | 模板 / 闸门文件语法迁移规则 |
 | [`docs/CLIENTS_IOS_ANDROID_WINDOWS.md`](docs/CLIENTS_IOS_ANDROID_WINDOWS.md) | 三端差异与交付格式 |
 | [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 经验总结（区分官方确认 / 经验推测） |
+| [`docs/PROMPT-DEVIATIONS.md`](docs/PROMPT-DEVIATIONS.md) | **任务要求 vs 实际执行的偏离对账**（含未覆盖项） |
 | [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
 | [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
 | [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃 / 移除总表（自动生成） |
