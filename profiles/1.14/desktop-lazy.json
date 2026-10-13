@@ -240,6 +240,11 @@
         "action": "reject"
       },
       {
+        "network": "udp",
+        "port": 443,
+        "action": "reject"
+      },
+      {
         "ip_is_private": true,
         "action": "route",
         "outbound": "direct"

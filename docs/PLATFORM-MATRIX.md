@@ -195,9 +195,11 @@
 而永远轮不到拦截；拦截动作只能写 `predefined`/`reject`，**写成 `route` 等于没拦**。
 详见 `AGENTS.md` 铁律 9 与 `docs/LESSONS.md` L28。
 
-**三份配置的 `route.rules` 顺序完全一致**（12 条）：
-`sniff` → `hijack-dns` → **`resolve(ipv4_only)`** → `reject(ip_version:6)` → 8 条 route 规则。
-`resolve` 的位置是硬性的（见 `docs/LESSONS.md` L18 / `AGENTS.md` 铁律 14）。
+**三份配置的 `route.rules` 顺序完全一致**（13 条）：
+`sniff` → `hijack-dns` → **`resolve(ipv4_only)`** → `reject(ip_version:6)` →
+**`reject(network:udp, port:443)`** → 8 条 route 规则。
+`resolve` 的位置是硬性的（见 `docs/LESSONS.md` L18 / `AGENTS.md` 铁律 14）；
+两条 `reject` 是**不同维度**的匹配（地址族 / 传输层），不能合并。
 
 **为什么三份都不写 `clash_api`**（桌面端原来有个只有 `default_mode` 的壳，已删，见 D17）：
 
