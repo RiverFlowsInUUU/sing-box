@@ -140,7 +140,29 @@ def check(p: Path):
     if len(re.findall(r"^```", txt, re.M)) % 2:
         issues.append((0, "FENCE", "代码围栏不配对"))
 
-    # LINK / ANCHOR
+    # MD055：表格被**意外断开**。
+    #
+    # 为什么加这条：本仓 AGENTS.md §0 那段「heredoc 会把 \n 变真换行」的说明里，
+    # `\n` 自己**变成了真换行**，把 markdown 表格从中间劈成两行 —— 第 7 次踩同一个坑，
+    # 而当时已有的围栏/BOM/NUL/行尾检查**全都没覆盖它**。
+    # 表格断开在渲染上很难看（整行错位），却完全不影响文本检查，属典型盲区。
+    #
+    # 判据（只报确定性情形，不猜"表格写得好不好"）：
+    #   一个以 `|` 开头的行，若其**下一行**既不是表格行（`|`）也不是空行/标题/围栏
+    #   —— 说明表格被劈开了。
+    for i, l in enumerate(lines[:-1], 1):
+        if not l.startswith("|"):
+            continue
+        nxt = lines[i] if i < len(lines) else ""
+        if nxt.startswith("|") or not nxt.strip():
+            continue
+        if nxt.startswith(("#", "```", "---")):
+            continue
+        issues.append((i, "MD055",
+                       "表格行后面紧跟非表格内容，表格可能被意外断开"
+                       "（常见成因：正文里的转义序列被 shell 改写）"))
+
+
     for m in re.finditer(r"\[([^\]]*)\]\(([^)]+)\)", txt):
         target = m.group(2)
         if target.startswith(("http://", "https://", "mailto:", "alma://")):
