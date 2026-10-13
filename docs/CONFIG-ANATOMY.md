@@ -88,19 +88,32 @@ $schema · log · dns · inbounds · outbounds · route · http_clients · exper
 | 1 | `hijack-dns` | `protocol: dns` | 把本机 DNS 查询交给上面的 DNS 层 |
 | 2 | `resolve` | `strategy: ipv4_only` | **★ 必须在所有 route/reject 之前** |
 | 3 | `reject` | `ip_version: 6` | 丢弃 IPv6 连接 |
-| 4 | `route` | `ip_is_private` → `direct` | 局域网直连 |
-| 5 | `route` | `jinx-direct` → `direct` | 白名单放行 |
-| 6 | `route` | `jinx-ads` → `🚫 AD` | 拦截 |
-| 7 | `route` | `awanue-ads` → `🚫 AD` | 拦截 |
-| 8 | `route` | `geosite-ai` → `🤖 AI` | 智能组专用 |
-| 9 | `route` | `geosite-private` → `direct` | 私有域名 |
-| 10 | `route` | `geosite-cn` → `direct` | 大陆域名 |
-| 11 | `route` | `geoip-cn` → `direct` | 大陆 IP |
+| 4 | `reject` | `network: udp` + `port: 443` | **封 QUIC/HTTP3**：强制回落 TCP HTTPS |
+| 5 | `route` | `ip_is_private` → `direct` | 局域网直连 |
+| 6 | `route` | `jinx-direct` → `direct` | 白名单放行 |
+| 7 | `route` | `jinx-ads` → `🚫 AD` | 拦截 |
+| 8 | `route` | `awanue-ads` → `🚫 AD` | 拦截 |
+| 9 | `route` | `geosite-ai` → `🤖 AI` | 智能组专用 |
+| 10 | `route` | `geosite-private` → `direct` | 私有域名 |
+| 11 | `route` | `geosite-cn` → `direct` | 大陆域名 |
+| 12 | `route` | `geoip-cn` → `direct` | 大陆 IP |
 | — | `final` | —— | **`🚀 Proxy`** |
 
 > ⚠️ **[2] `resolve` 的位置是本仓踩过坑的地方**：它把域名在本地解析成 IPv4 字面量。
 > **放末尾等于没放** —— 首个 route/reject 命中即 `break match`，后面根本不跑。
 > 门禁：`resolve_not_first` / `resolve_not_ipv4_only` / `resolve_missing_ipv4_only`。
+
+**关于 [4] 封 UDP 443（禁用 QUIC / HTTP3）**
+
+两层配合，不是重复：
+
+| 层 | 作用 | 覆盖什么 |
+|---|---|---|
+| DNS `rules[0]` 的 `HTTPS`/`SVCB` → `NOERROR` | 客户端**查不到** `alpn=h3`，多数不会尝试 QUIC | 依赖客户端尊重 DNS 发现机制 |
+| route `rules[4]` 的 `udp/443` → `reject` | **连接层直接丢**，无论客户端怎么想的 | 兜底：DNS 被绕过 / 客户端硬编码 h3 也拦得住 |
+
+> 两条 `reject`（[3] 地址族 / [4] 传输层）是**不同维度**，不能合并成一条。
+> 位置固定在 `resolve` 之后、所有分流之前 —— UDP 443 **无论去哪都拦**，不需先判国内国外。
 
 **`route` 顶层字段**
 
