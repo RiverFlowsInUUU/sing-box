@@ -43,13 +43,8 @@ python tools/upgrade-check.py      # 报告：1 版本比对 2 文档 diff 3 矩
 上游除了「哪些字段要删」，还有「多了哪些新能力」。后者**没有默认答案** ——
 不写就是隐式选择了"不启用"，而理由往往只是"没注意到"（铁律 16）。
 
-出「升级清单」，三栏分类：
-
-| 栏 | 含义 | 例子 |
-|---|---|---|
-| **必须跟随** | 旧写法被取代，必须删旧字段 | 1.15 的 `tun.stack` |
-| **必须决策** | 新能力，启用/不启用由**用户拍板** | MASQUE / Tailcat / `auto_redirect` |
-| **可放着** | 纯内部更新或与场景无关 | —— **也要记一笔**，否则下次会被当成漏项反复报警 |
+出「升级清单」，**三栏分类**（必须跟随 / 必须决策 / 可放着）
+—— 定义与写法见 [`docs/SINGBOX_UPGRADE.md`](docs/SINGBOX_UPGRADE.md) §五bis。
 
 > ⚠️ 这三栏**必须逐条给用户看、等用户拍板，不得自行决定**（铁律 16）。
 
@@ -70,7 +65,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 ```
 
 > ⚠️ 改**流程本身**时四个文件必须同步（L22）：
-> `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/DECISIONS.md`。
+> `AGENTS.md` / `AI-ENTRY.md` / `MAINTAINERS.md` / `docs/DECISIONS.md`。
 
 ---
 
@@ -103,7 +98,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 - `profiles/1.14/*-lazy.json`
 - `templates/groups.json`
 - `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）
-- `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/PROTOCOL-MAPPING.md` /
+- `AGENTS.md` / `AI-ENTRY.md` / `MAINTAINERS.md` / `docs/PROTOCOL-MAPPING.md` /
   `nodes/nodes.example.json`
 - 仓库外 `local/` 下的运行配置
 
@@ -170,7 +165,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 ```
 AGENTS.md                     ← 司机入口（改配置）
 MAINTAINERS.md                ← 本文件（改规则）
-README.md                     ← 人类入口
+AI-ENTRY.md                   ← 机器入口卡片（面向 LLM，不面向人）
 singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
 docs/
   AI_SYNC_WORKFLOW.md         ← 总工作流（5 模块 / 触发 / 指令模板 / 异常处理）

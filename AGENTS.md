@@ -137,7 +137,7 @@ BOM / NUL / 行尾混用 / 整文件 CRLF。仓库已由 `.gitattributes` 统一
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | 决策记录：新功能为何启用/不启用 |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | 事故台账（**查时读**，别整读） |
 | [`docs/upstream-*.md`](docs/) | 上游官方文档快照（testing 分支，**早于正式版**，勿当当前版本说明） |
-| [`README.md`](README.md) | 人类入口 |
+| [`AI-ENTRY.md`](AI-ENTRY.md) | 机器入口卡片（面向 LLM，不面向人） |
 
 ---
 
@@ -188,55 +188,45 @@ python tools/mknode.py '<分享链接>' --platform <desktop|android|ios> --group
 
 ---
 
-## 8. 完整克隆要求
+## 8. 完整克隆要求（**最高优先级**）
 
 **每次换设备、换 AI Agent、换运行环境后，在修改本仓库前必须完整克隆。**
 
 ```bash
 git rev-parse --is-shallow-repository   # 必须返回 false
-git rev-list --count HEAD               # 能读出完整提交历史
-git tag | wc -l                         # 能读出标签
-git branch -a                           # 能读出所有相关分支
 ```
 
-已是浅克隆时：`git fetch --unshallow`（或删除后重新完整克隆）。
-**无法克隆时明确告知我**，不得在浅克隆基础上继续操作。
+**完整规则、禁止的克隆参数、无法克隆时的处置** →
+[`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md#七完整克隆规则最高优先级) §七 ·
+实例 [`E1`](docs/EXPERIENCES.md)。
 
-详细规则、禁止的克隆参数、无法克隆时的处置 →
-[`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md#七完整克隆规则最高优先级) §七 · 实例 [`E1`](docs/EXPERIENCES.md)。
+> **单一来源原则**：这一节此前把「四条验证命令 + 浅克隆处置 + 指向」在本文件、
+> `AI_SYNC_WORKFLOW.md` §七、`EXPERIENCES.md` E1 **各写了一遍**。
+> 现收敛到 §七（详版），本文件只留一句判据 + 指针。
+>
+> ⚠️ **有意保留的两处重复**（改这里之前先读）：
+> ① 那句「每次换设备…必须完整克隆」—— 这是**规则名**，两处都要有，
+>    否则只读 `AI_SYNC_WORKFLOW.md` 的人看不到它在入口的地位；
+> ② `git rev-parse --is-shallow-repository` 这一条命令 —— 它是**判据**，
+>    入口必须能直接执行、不必翻页。
+> **除这两样之外，本节不再新增任何正文。**
 
-### 换设备后的第二件事：手敲一次转义层自检
+### 换设备三步清单（只有顺序，正文在别处）
 
-```bash
-python tools/check-shell-escapes.py '\' '\\' '\\\' '\\\\'
-```
+| # | 做什么 | 正文 |
+|---|---|---|
+| 1 | **完整克隆**（禁浅克隆） | `docs/AI_SYNC_WORKFLOW.md` §七 |
+| 2 | **手敲一次转义层自检** | 本文件 §0.2（必须手敲，不能进 `check-all.sh`） |
+| 3 | **登记内核路径** | 见下方 |
 
-**必须手敲。** 实测：折半**只发生在「手敲命令行」这条路径上** ——
-经 Bash 工具传参会折半（2→1、3→2），而经子进程 / 脚本内部调用是**无损**的。
-所以这一步**不能放进 `check-all.sh`**（那里永远是「无损」，是假绿灯），
-只能由你/我手工跑一次。
-
-看结论：**转义无损** → 命令行可以传含反斜杠的内容；
-**转义被改写** → 内容必须走文件（`find_file` / `replace_file`）。
-
-> ⚠️ 这不是「配环境」检查，是**量既定事实**。这一层在调用链里，
-> 配 shell / Python / Windows 编码都治不到它 —— 换环境后倍率**可能不同**，
-> 每次都要重量，别继承上一次的结论。
-
-### 换设备后的第三件事：登记内核路径
-
-### 换设备后的第三件事：登记内核路径
-
-
-克隆完之后，如果本机没装内核，**`check` / `run` 会静默跳过** —— 看起来照样 PASS（见 H14）。
-所以换设备后第二步是让它找得到内核：
+**第 3 步：登记内核路径**
 
 ```bash
 mkdir -p local
 echo '/绝对路径/to/sing-box' > local/.singbox-bin    # local/ 已 gitignore，不进仓库
 ```
 
-解析顺序：`SINGBOX_BIN` 环境变量 → `bin/sing-box[.exe]` → `PATH` → `local/.singbox-bin`。
+解析顺序：`SINGBOX_BIN` → `bin/sing-box[.exe]` → `PATH` → `local/.singbox-bin`。
 
 **登记完自己验一下**（本仓曾因漏报「跳过」而发过假绿灯）：
 
@@ -246,9 +236,7 @@ python tools/audit.py 2>&1 | grep -i "matrix_probe_skipped"
 
 **没有输出** = 内核已就位。有输出 = 内核没找到，门禁不完整，**别拿这时的「全绿」当结论**。
 
-> 注意：`local/` 是**不入库**的，所以这一步**每次换设备都要重做** —— 它不会跟着克隆过来。
-
----
+> ⚠️ `local/` **不入库**，所以这一步**每次换设备都要重做** —— 它不会跟着克隆过来。
 
 ## 9. 关键事项确认表
 

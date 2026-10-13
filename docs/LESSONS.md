@@ -2046,6 +2046,13 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 **门禁**：`matrix_path_unreachable` / `matrix_probe_skipped`
 
+> **延伸对策（2026-10-13 补）**：L46 的另一半成因是「同一份定义写在两个地方」——
+> 模块 2 的规则清单、三栏分类表、完整克隆流程都曾在两处**一字不差**各写一遍。
+> 已新增门禁 **`rules_dupe`**（`tools/audit_rules_dupe.py`）：抽所有活文档里的规则句，
+> 同一句同时出现在 ≥2 份文件即报；豁免必须写明理由（`EXEMPT_PREFIX`）。
+> 同时把入口文档收敛为单一来源：`README.md` → `AI-ENTRY.md`（整仓面向 LLM），
+> 正文各归其位，重复处只留指针。
+
 ---
 
 ## L47 防泄露门禁的判据写成了目录名，而它的负向用例是坏的、且从未登记
