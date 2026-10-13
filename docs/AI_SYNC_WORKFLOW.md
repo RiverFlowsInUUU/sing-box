@@ -43,7 +43,7 @@ sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
 ```
 singbox_version.txt        当前锁定的正式版（唯一真相）
 AGENTS.md                  指路牌 + 硬规则入口
-AI-ENTRY.md                机器入口卡片（面向 LLM）
+README.md                机器入口卡片（面向 LLM）
 MAINTAINERS.md             改规则的操作手册
 docs/AI_SYNC_WORKFLOW.md   本文件：总工作流
 docs/PROTOCOL-MAPPING.md   分享链接 → outbound 字段映射（核心知识）

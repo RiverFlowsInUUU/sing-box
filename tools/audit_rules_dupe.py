@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # 参与检查的「活文档」——历史台账（LESSONS/DECISIONS）与上游快照排除在外：
 # 它们本来就要能引用旧名/旧话术，拿它们比对只会制造噪音。
 DOCS = [
-    "AI-ENTRY.md", "AGENTS.md", "MAINTAINERS.md",
+    "README.md", "AGENTS.md", "MAINTAINERS.md",
     "docs/AI_SYNC_WORKFLOW.md", "docs/SINGBOX_UPGRADE.md",
     "docs/TEMPLATE_MIGRATION.md", "docs/CLIENTS_IOS_ANDROID_WINDOWS.md",
     "docs/EXPERIENCES.md", "docs/PROTOCOL-MAPPING.md",
@@ -114,7 +114,7 @@ def main():
           f"（另 {len(exempted)} 组经豁免）")
     if found:
         print("\n  ⇒ 同一件事只应在一处完整陈述。请把正文收敛到它的**归属文档**，")
-        print("     其余位置只留一句话 + 指针（见 AI-ENTRY.md 的「单一来源」原则）。")
+        print("     其余位置只留一句话 + 指针（见 README.md 的「单一来源」原则）。")
         print("     确属必要重复的，加进本文件 EXEMPT_PREFIX 并写明理由。")
     return 1 if found else 0
 
