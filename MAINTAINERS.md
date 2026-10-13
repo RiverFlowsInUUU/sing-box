@@ -65,7 +65,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 ```
 
 > ⚠️ 改**流程本身**时四个文件必须同步（L22）：
-> `AGENTS.md` / `AI-ENTRY.md` / `MAINTAINERS.md` / `docs/DECISIONS.md`。
+> `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/DECISIONS.md`。
 
 ---
 
@@ -98,7 +98,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 - `profiles/1.14/*-lazy.json`
 - `templates/groups.json`
 - `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）
-- `AGENTS.md` / `AI-ENTRY.md` / `MAINTAINERS.md` / `docs/PROTOCOL-MAPPING.md` /
+- `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/PROTOCOL-MAPPING.md` /
   `nodes/nodes.example.json`
 - 仓库外 `local/` 下的运行配置
 
@@ -165,7 +165,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 ```
 AGENTS.md                     ← 司机入口（改配置）
 MAINTAINERS.md                ← 本文件（改规则）
-AI-ENTRY.md                   ← 机器入口卡片（面向 LLM，不面向人）
+README.md                   ← 机器入口卡片（面向 LLM，不面向人）
 singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
 docs/
   AI_SYNC_WORKFLOW.md         ← 总工作流（5 模块 / 触发 / 指令模板 / 异常处理）

@@ -137,7 +137,7 @@ BOM / NUL / 行尾混用 / 整文件 CRLF。仓库已由 `.gitattributes` 统一
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | 决策记录：新功能为何启用/不启用 |
 | [`docs/LESSONS.md`](docs/LESSONS.md) | 事故台账（**查时读**，别整读） |
 | [`docs/upstream-*.md`](docs/) | 上游官方文档快照（testing 分支，**早于正式版**，勿当当前版本说明） |
-| [`AI-ENTRY.md`](AI-ENTRY.md) | 机器入口卡片（面向 LLM，不面向人） |
+| [`README.md`](README.md) | 机器入口卡片（面向 LLM，不面向人） |
 
 ---
 
