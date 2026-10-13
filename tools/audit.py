@@ -527,7 +527,7 @@ def _audit_dns_adblock(cfg, rep: Report):
         )
 
 
-def audit_repo_rules(cfg, rep: Report):
+def audit_repo_rules(cfg, rep: Report, is_template: bool = False):
     """本仓库自己的规范（与上游无关）。"""
 
     # 1) cache_file.path 必须是工作目录内的相对文件名
@@ -717,14 +717,25 @@ def audit_repo_rules(cfg, rep: Report):
                     "（sing-box check 不校验这个）",
                 )
             if not refs:
-                if o.get("tag") in NO_NESTING_GROUPS:
+                # ⚠️ 空组是**真 FATAL**：`initialize outbound[N]: missing tags`，
+                # 而且 `sing-box check` 对它**完全静默**（只反序列化、不初始化）。
+                # 所以「骨架允许空」这条豁免只能是**收紧到骨架本身**，
+                # **不能按组名放宽** —— 旧写法对 `NO_NESTING_GROUPS` 里的组一律降级成 WARN，
+                # 于是**完整可运行配置**里 🚀 Proxy / 🤖 AI 空掉时只报 WARN，
+                # 一运行就 FATAL。这是 L48 的第二处。
+                if is_template and o.get("tag") in NO_NESTING_GROUPS:
                     rep.warn(
                         "empty_group_skeleton",
-                        f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空：骨架模板允许，"
-                        "真正生成的配置必须把节点加进去",
+                        f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空："
+                        "**骨架模板**允许（它只是格式参考），真正生成的配置必须把节点加进去",
                     )
                 else:
-                    rep.error("empty_group", f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空")
+                    rep.error(
+                        "empty_group",
+                        f"outbounds[{i}] ({o.get('tag')}) 的 outbounds 为空 —— "
+                        "sing-box 启动会 `FATAL: initialize outbound[N]: missing tags`，"
+                        "而 `sing-box check` 对此完全静默",
+                    )
         if o.get("type") == "urltest" and not o.get("url"):
             rep.error("urltest_no_url", f"outbounds[{i}] ({o.get('tag')}) 是 urltest 但没有 url")
 
@@ -774,8 +785,20 @@ def audit_repo_rules(cfg, rep: Report):
                 f"规范名必须逐字是 {GROUP_TAGS}",
             )
 
+    # ⚠️ `route.final` **缺失**与**写错**是两回事，但后果一样严重 —— 都是「流量静默改道」。
+    # 旧写法 `if final and final not in tagset` 只在「值存在且写错」时报；
+    # 把 `final` 整个删掉反而**完全静默**（L48）。缺失必须是它自己的错误。
     final = route.get("final")
-    if final and final not in tagset:
+    if is_template:
+        pass  # 骨架模板不含 route 段，不做 final 存在性断言（与 new_feature present 断言同一处理）
+    elif not final:
+        rep.error(
+            "final_missing",
+            "route 里没有 `final`。缺了它，未被任何规则命中的流量会走 **sing-box 的默认出站**"
+            "（first outbound），而不是我们的 🚀 Proxy —— 表现是「能跑、但分流悄悄不对」，"
+            "而 `sing-box check` 对此完全静默",
+        )
+    elif final not in tagset:
         rep.error("final_missing", f"route.final = {final!r} 不在出站列表中")
 
     # 3b) 引用完整性：route.rules[].outbound / rule_set / default_domain_resolver
@@ -850,8 +873,18 @@ def audit_repo_rules(cfg, rep: Report):
                     "dns_rule_ruleset_missing",
                     f"dns.rules[{i}] 引用了未定义的规则集 {r!r}（sing-box check 不校验这个）",
                 )
+    # 同 route.final：**缺失**与**写错**都要报。dns.final 缺失时 sing-box 用第一个 dns server
+    # 兜底 —— 而本仓第一个 server 是明文 `dns-bootstrap`，等于**悄悄把 DNS 降级成明文**（L48）。
     dns_final = cfg.get("dns", {}).get("final")
-    if dns_final and dns_final not in dns_tags:
+    if is_template:
+        pass
+    elif dns_tags and not dns_final:
+        rep.error(
+            "dns_final_missing",
+            "dns 里没有 `final`。缺了它，未被规则命中的查询会走 **dns.servers 的第一条** —— "
+            "本仓第一条是明文 `dns-bootstrap`，等于把 DNS 静默降级成明文 UDP",
+        )
+    elif dns_final and dns_final not in dns_tags:
         rep.error("dns_final_missing", f"dns.final = {dns_final!r} 不在 dns.servers 中")
 
     # 4) 去广告组只能放 block（m07194：删掉 direct）；默认值必须是 block，否则整个去广告链路静默失效
@@ -2753,6 +2786,30 @@ def audit_tools(rep: Report):
     except Exception as ex:  # noqa: BLE001 — 自检本身失败也要报出来
         rep.error("tool_selftest_failed", f"无法对 diff_config 做自检：{ex!r}")
 
+    # ⚠️ **反向对账**：`negtest.py` 里每个 `m_*` 破坏函数都必须登记进 `CASES`。
+    #    没有这一步，「写了破坏函数但忘了登记」是**完全的静默** ——
+    #    negtest 只检查已登记用例响不响，孤立在文件里的死函数它看不见（L47）。
+    #    实测踩过：`m_placeholder_server` 既没登记、本身还是坏的，
+    #    躺在那里不知道多久，而「28/28 全绿」的报告完全正常。
+    #
+    #    豁免走白名单且必须写明理由 —— 要加豁免，就得在这里留一行，别偷偷跳过。
+    try:
+        nt_src = (ROOT / "tools" / "negtest.py").read_text(encoding="utf-8")
+        negfuncs = set(re.findall(r"^def (m_[a-z0-9_]+)\(", nt_src, re.M))
+        negcases = set(re.findall(r"\(\s*\"[a-z0-9-]+\"\s*,\s*(m_[a-z0-9_]+)", nt_src))
+        # 允许「定义但本用例不需要单独断言」的，必须在这里显式列出 + 理由
+        NEGTEST_EXEMPT = set()
+        orphan = sorted(negfuncs - negcases - NEGTEST_EXEMPT)
+        if orphan:
+            rep.error(
+                "tool_selftest_failed",
+                f"negtest.py 里有破坏函数没登记进 CASES：{orphan} —— "
+                "未登记的用例不参与负向回归，等于这条门禁没有任何测试保护。"
+                "要么登记进 CASES，要么加进 audit.py 的 NEGTEST_EXEMPT 并写明理由",
+            )
+    except OSError as ex:
+        rep.error("tool_selftest_failed", f"无法读取 negtest.py 做反向对账：{ex!r}")
+
     # LEAK_SCAN_START_DATE 必须带显式时区偏移（对应 L30 那次真实事故）
     # 不带偏移时 git 按各机器本地时区解释：本机 +0800 扫到 6 个提交、CI(UTC) 扫到 0 个，
     # 同一份门禁给出相反的结论。这类“环境相关”的常量必须把自己钉死。
@@ -3104,7 +3161,7 @@ def main():
 
         skipped = audit_matrix(cfg, rep, matrix, version, platforms, is_template=is_template)
         audit_platform_caps(cfg, rep, platforms)
-        audit_repo_rules(cfg, rep)
+        audit_repo_rules(cfg, rep, is_template=is_template)
         audit_loopback_guard(cfg, rep)
         if is_template:
             audit_template(rep)
