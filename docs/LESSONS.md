@@ -1805,8 +1805,35 @@ heredoc 是「内容先经过了一层我不控制的解释器」。
 2. 备份只放**仓库内**路径（`local/` 受 `.gitignore` 保护），不用 `/tmp`。
 3. 铁律 22（`AGENTS.md`）：**改文件不许「先打开、后算内容」**。
 
-**门禁**：无（约束的是「写入方式」而不是配置内容；由 `tools/patch-text.py` 与铁律 22 承载 ——
-`audit_tools()` 会把 `patch-text.py` 一起 `compile()`，语法坏掉时报 `tool_syntax_error`）
+**门禁**：`edit_method_fingerprint`
+
+> ⚠️ 这一行原本写的是「**无**」。那四个字害了我 5 次。
+> 2026-10-13 实测出的规律，干净得像实验数据：
+>
+> | 规则 | 台账写的 | 实际违反 |
+> |---|---|---|
+> | 组 tag 带 emoji | `group_tag_incomplete` | 0 次 |
+> | 占位域名 | `placeholder_server` | 0 次 |
+> | 改文件走 patch-text | **「无」** | **连犯 5 次** |
+>
+> **「门禁：无」本身等于免责声明** —— 读到它时那句话是「这条没有机器兜底，是软要求」。
+> 所以这里必须把「无」改掉，哪怕能验的只是一部分。
+>
+> **能验什么（诚实交代）**：验不了「我到底用没用 `patch-text.py`」——
+> 绕过手段（heredoc / `--spec-inline` / 临时脚本）本质是通用能力，禁不掉；
+> 而且过程痕迹会被 `git checkout` 回滚抹掉（实测：事后查 git 一无所获）。
+>
+> **但「绕过它才会留下的产物指纹」能验**，且是确定性的（无假阳性）：
+> BOM / NUL 字节 / 行尾混用 / 整文件 CRLF —— 仓库已由 `.gitattributes` 统一 LF，
+> 出现这些就说明有人用 `open(p,'w')` 裸写过。
+>
+> 定位：**不追求拦死，追求把违规成本从 0 提到可见**。
+> 守规零成本、违规留痕，这就够了。
+>
+> 工具：`tools/check-edit-method.py`，已接入 `tools/check-all.sh` 与 CI。
+>
+> 附带保留原有的那句：`audit_tools()` 会把 `patch-text.py` 一起 `compile()`，
+> 语法坏掉时报 `tool_syntax_error`。
 
 **涉及**：`tools/patch-text.py`、`AGENTS.md` 铁律 22、`tools/audit.py` 的 `audit_tools()`
 
