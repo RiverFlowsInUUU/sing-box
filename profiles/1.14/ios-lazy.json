@@ -271,6 +271,15 @@
         "outbound": "🚫 AD"
       },
       {
+        "domain_suffix": [
+          "xn--ngstr-lra8j.com",
+          "services.googleapis.cn",
+          "googleapis.cn"
+        ],
+        "action": "route",
+        "outbound": "🚀 Proxy"
+      },
+      {
         "rule_set": [
           "geosite-ai"
         ],
