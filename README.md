@@ -5,38 +5,67 @@
 **核心用途**：你只给节点分享链接（`vmess://` / `vless://` / `trojan://` / `hysteria2://` / `ss://` …）
 和目标平台，任何 AI 读完本仓库的文档就能生成一份能在 sing-box 正式版上跑起来的完整配置。
 
+## 两扇门，别走错
+
+这个仓库有两个入口，成本差一个数量级。选错了就是"改一个节点要读完整本维护手册"。
+
+| 你要做的事 | 走哪扇门 | 入口 |
+|---|---|---|
+| **给节点、出配置、排障**（改配置） | 快车道 | [`AGENTS.md`](AGENTS.md) — 一条命令 |
+| **升级内核、加门禁、改规则**（改规则） | 慢车道 | [`MAINTAINERS.md`](MAINTAINERS.md) |
+
 ## 快速开始
 
-### 我是用户，想直接拿配置
+### 我有一条节点链接，想要配置（最常用）
 
-1. 打开 `profiles/1.14/`，按平台选：
-   - `desktop-lazy.json` — Windows / Linux 桌面版
-   - `android-lazy.json` — Android
-   - `ios-lazy.json` — iOS / iPadOS
-2. 把里面**所有占位节点**（`node-0X.example.com` 那几条）删掉。
-3. 按 `docs/PROTOCOL-MAPPING.md` 把你的分享链接翻译成节点对象，追加进 `outbounds`。
-4. 把新节点的 `tag` 加进对应分流组的 `outbounds` 数组：
-   - 代理组（`🚀 Proxy`）— 普通外网（**本身就是 urltest 自动测速组，加进去即完成**）
-   - 智能组（`🤖 AI`）— AI 类站点（**同样是 urltest**，放你希望 AI 走的那几个节点）
-   - 去广告组（`🚫 AD`）— 广告拦截（**出口只有 `block`**，即「命中就拦」，没有放行档）
-5. 导入客户端。
+```bash
+python tools/mknode.py 'vless://...' --platform ios --group proxy
+```
 
-更省事的做法：把仓库链接 + 分享链接 + 目标平台直接丢给 AI，让它按 `AGENTS.md` 生成。
+一条命令做完四件事：**解码链接 → 套骨架 → 加进分流组 → 跑门禁**。
+产物落在 `local/<platform>.json`（含真实节点，已 gitignore，**永不提交**）。
+
+- `--platform`：`desktop` / `android` / `ios`
+- `--group`：`proxy`（`🚀 Proxy`）或 `ai`（`🤖 AI`）。**`ad` 会被拒绝** —— 去广告组只放 `block`
+- `--name 香港01`：自己命名节点（可重复）
+- `--dry-run`：先看不写盘
+
+约 **1 秒**。退出码 `0` 就是门禁全绿，可以直接导入客户端。
+
+> 手工路线（想自己拼 JSON）见 `docs/PROTOCOL-MAPPING.md` + `profiles/1.14/`；
+> 但那条路要把铁律 6/12/14 等自己记住，快车道不用。
 
 ### 我是 AI / 想按规范生成
 
-从 `AGENTS.md` 开始读，它是给 AI 的入口。
+从 [`AGENTS.md`](AGENTS.md) 开始读 —— 它是给 AI 的**指路牌**，详细内容都在 `docs/` 下。
+
+## 文档索引
+
+| 文档 | 用途 |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | **指路牌 + 硬规则入口**（面向 AI Agent） |
+| [`MAINTAINERS.md`](MAINTAINERS.md) | 改**规则本身**的操作手册：升级流程 / 加门禁 / 改矩阵 / 改组 tag |
+| [`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md) | **AI 驱动的配置同步工作流**（5 个模块 + 流程图 + 指令模板） |
+| [`docs/SINGBOX_UPGRADE.md`](docs/SINGBOX_UPGRADE.md) | 上游升级流程与新功能逐点请示 |
+| [`docs/TEMPLATE_MIGRATION.md`](docs/TEMPLATE_MIGRATION.md) | 模板 / 闸门文件语法迁移规则 |
+| [`docs/CLIENTS_IOS_ANDROID_WINDOWS.md`](docs/CLIENTS_IOS_ANDROID_WINDOWS.md) | 三端差异与交付格式 |
+| [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 经验总结（区分官方确认 / 经验推测） |
+| [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
+| [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
+| [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃 / 移除总表（自动生成） |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | 决策记录：新功能为何启用 / 不启用 |
+| [`docs/LESSONS.md`](docs/LESSONS.md) | 事故台账（**查时读，别整读**） |
 
 ## 仓库结构
 
 ```
-AGENTS.md                     AI 入口与 26 条铁律
+AGENTS.md                     ★ 司机入口（改配置）：一条命令 + 26 条铁律
+MAINTAINERS.md                ★ 立法者入口（改规则）：升级流程 / 加门禁 / 改矩阵 / 改组 tag
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
-  LESSONS.md                  【开工先读】事故台账：现象→根因→修法→对应门禁
-  DECISIONS.md                【开工先读】决策记录：新功能为何启用/不启用、备选方案、前提风险
-  WORKFLOW.md                 完整工作流（怎么用 + 怎么维护）
+  LESSONS.md                  【查时读】事故台账：现象→根因→修法→对应门禁（118KB，别整读）
+  DECISIONS.md                【查时读】决策记录：新功能为何启用/不启用、备选方案、前提风险
   PROTOCOL-MAPPING.md         【核心】分享链接 → outbound 字段映射
   PLATFORM-MATRIX.md          Android / iOS / Windows 能力差异
   VERSION-MATRIX.md           废弃/移除字段总表（人读版，自动生成）
@@ -45,9 +74,13 @@ docs/
   upstream-*.md               官方 deprecated / migration / changelog / tun 快照
   evidence/                   事故证据存档（脱敏后入库；铁律 11 的 debug 日志证据）
 profiles/1.14/                可运行配置（占位节点）
-templates/                    片段骨架
+templates/                    片段骨架 + 三端索引入口
+  groups.json                 三个固定分流组的结构
+  ios/ android/ windows/      三端索引入口（各含 README，不含可运行配置）
 nodes/nodes.example.json      节点书写示例
 tools/
+  mknode.py                   ★ 司机入口：链接 → 配置 → 门禁 → local/<platform>.json（约 1 秒）
+  share-link.py               链接 → outbound 对象（mknode.py 调用它，解码逻辑只有一份）
   audit.py                    门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
                               平台矩阵对账 / 模板覆盖对账 / 散文旧组名扫查 /
                               矩阵 path ⟺ 内核交叉对账（matrix_path_unreachable）/
@@ -127,7 +160,11 @@ python tools/upgrade-check.py
 17. **改配置、改流程都先拉仓库、先看 diff**——不直接覆盖已有文件（有把已更正的文档改回错误结论的先例）；`git commit` / `git push` / 改 `singbox_version.txt` / 改 `adopt` / 删除任何现有字段 / `upgrade-check.py --write` 这六个动作**必须事先取得用户同意**
 
 每条铁律背后的事故、源码证据与对应门禁见 [`docs/LESSONS.md`](docs/LESSONS.md)。
-**开工前先扫一遍那份台账**，那些坑都是真机上踩过的。
+
+> ⚠️ **不要"开工前先扫一遍"那份台账。** 它 118KB，是给**改规则的人**（`MAINTAINERS.md`）
+> 查证用的，不是给改配置的人做读取清单的。走 `mknode.py` 快车道时，铁律 2/3/5/6/9/12/13/14
+> 都已经编译进工具与门禁里 —— **出错了再来 grep**，比先读一遍有用得多。
+> （把整读台账当成开工仪式，是 2026-10-13 那次 90 分钟任务的成本大头，见 `LESSONS.md` L45。）
 
 ## 常见坑
 
@@ -152,7 +189,8 @@ python tools/upgrade-check.py
 
 ## 版本
 
-现行锁定版本见 `singbox_version.txt`。上游发布新正式版时的处理流程见 `docs/WORKFLOW.md` 流程 B。
+现行锁定版本见 `singbox_version.txt`。上游发布新正式版时的处理流程见
+[`docs/SINGBOX_UPGRADE.md`](docs/SINGBOX_UPGRADE.md) 与 [`MAINTAINERS.md`](MAINTAINERS.md)。
 
 ## 声明
 

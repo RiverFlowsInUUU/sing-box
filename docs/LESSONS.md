@@ -1979,6 +1979,46 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## L46 「门禁还在、判据已经落空」发生在它自己的检测器身上，而且是两处
+
+**现象**：`tools/negtest.py` 的 `matrix-path-renamed` 用例长期 ❌ ——
+把矩阵里 `route.rules[].geosite` 改名成 `geosite_renamed_by_upstream` 之后，
+期望的 `matrix_path_unreachable` **一次都没报出来**，而全仓审计照样 0 ERROR。
+
+**根因**：两处独立的判断错误叠在一起，各自都够让这条门禁失效：
+
+1. **`_probe_verdict()` 把"移除"误判成"认识"**。它只用
+   `"unknown field" not in out` 判定内核是否认得字段。但 sing-box 对**已移除**字段
+   （`kind=removed`）用的是内置 migration：报的是
+   `geosite database is deprecated in sing-box 1.8.0 and removed in sing-box 1.12.0`，
+   **根本不会**出现 `unknown field`。于是「内核已经不认它」被判成「可探」，
+   反向用例永远等不到 `matrix_path_unreachable`。
+   讽刺的是：`_probe_verdict` **已经把 `removed in` 的版本号正则抓出来了**，
+   却只拿去喂 `matrix_version_mismatch` 的提醒，没拿来做可达性判据 ——
+   信息就在手里，判据没用它。
+2. **`--no-check` 连带把内核也关了**。`negtest.py` 的 `run_case_matrix` 调
+   `_audit_codes(..., no_check=False)` 想真跑内核；但 `find_singbox()` 在本机
+   既没有 `bin/sing-box.exe`、也没设 `SINGBOX_BIN`、也没有 `local/.singbox-bin`，
+   返回 `None`，于是 `audit_matrix_paths()` 走 `matrix_probe_skipped` 直接返回。
+   **整条交叉对账从头到尾没执行过**，而这个"没执行"当时只报 INFO。
+
+**为什么没被拦住**：这个仓库把"防止静默失效"当成核心卖点（铁律 21、L25、L34、L39），
+`audit_matrix_paths()` 就是为此专门写的检测器。但它自己犯了同一类错误，而且是**两处**：
+判据漏了一种内核报法；跳过路径又只报 INFO。
+更值得记的是：**`negtest.py` 其实一直在正确地喊 ❌** —— 从它被写出来那天就在喊。
+只是没人把那条 ❌ 当成真信号看，因为它"看起来像个老问题"。
+**测试说「门禁是死的」说了很久，而结论被当成了背景噪音。**
+
+**修法**：
+1. `_probe_verdict(binary, cfg, tmp, target_version)` 增加第三个判据 ——
+   内核自报的 `removed_in` **不晚于**目标版本 ⇒ 字段已不可用。
+   取**方向性**判断（`not ver_ge(rem, target)`）而不是"出现过 removed 就算"：
+   在 1.14 上探一个"1.15 才移除"的字段，它在当前版本仍然可用，不算不可达。
+2. `audit_matrix_paths()` 的 `binary is None` 分支由 `rep.info` 改 `rep.warn`。
+   **一条永远为真的绿灯等于没有灯**：没装内核时门禁不再全净，是**故意**的。
+
+**门禁**：`matrix_path_unreachable` / `matrix_probe_skipped`
+
 ---
 
 ## 附：怎么加一条新教训

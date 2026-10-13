@@ -1106,11 +1106,29 @@ def _probe_candidates(path: str):
     return [("根", probe)]
 
 
-def _probe_verdict(binary: str, cfg, tmp: Path):
+def _probe_verdict(binary: str, cfg, tmp: Path, target_version: str = None):
     """跑一次探针，返回 (字段是否被内核认识, 内核自报的废弃/移除版本, 原始输出)。
 
     `sing-box check` 的错误文本就是判据；上游改文案会在这里暴露（配 negtest 的用例）。
+
+    ⚠️ 「内核不认这个字段」有**两种**报法，只认后者会让门禁静默失声（L46）：
+
+      · `json: unknown field "x"`            —— 字段从来没存在过，或已被改名搬走
+      · `x database is deprecated in A and
+         removed in B`                        —— 字段被**移除**了（内置 migration 仍认名字，
+                                                所以**根本不会**报 unknown field）
+
+    第二类是 `kind=removed` 条目的正常形态。早先只查 `"unknown field" not in out`，
+    于是「已移除」被误判成「内核认识 ⇒ 可探」，`matrix_path_unreachable` 永远不响
+    —— 门禁还在、判据已经落空，正是铁律 21 警告的那种失效，而它偏偏发生在这个
+    专门用来检测该失效的门禁自己身上。
+
+    判据取**方向性**的一条：只有当内核自报的 `removed_in` **不晚于**目标版本时，
+    才能断定字段在当前锁定内核上已经不可用。内核自报比目标版本新（例如在 1.14 上
+    探一个「1.15 才移除」的字段），说明它在当前版本仍可用，**不算不可达**。
     """
+    if target_version is None:
+        target_version = ""
     tmp.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
     try:
         p = subprocess.run(
@@ -1126,10 +1144,16 @@ def _probe_verdict(binary: str, cfg, tmp: Path):
     out = re.sub(r"\x1b\[[0-9;]*m", "", (p.stdout or "") + (p.stderr or ""))
     dep = re.search(r"deprecated in sing-box (\d+\.\d+\.\d+)", out)
     rem = re.search(r"removed in sing-box (\d+\.\d+\.\d+)", out)
-    return ("unknown field" not in out), {
-        "deprecated_in": dep.group(1) if dep else None,
-        "removed_in": rem.group(1) if rem else None,
-    }, out
+    dep_v = dep.group(1) if dep else None
+    rem_v = rem.group(1) if rem else None
+    # 判据：unknown field ⇒ 不认；内核自报「已在本版本之前移除」⇒ 同样不认。
+    if "unknown field" in out:
+        known = False
+    elif rem_v and not ver_ge(rem_v, target_version):
+        known = False
+    else:
+        known = True
+    return known, {"deprecated_in": dep_v, "removed_in": rem_v}, out
 
 
 def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
@@ -1148,7 +1172,17 @@ def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
       · 两边都不提版本号 —— 信息不足，不判。
     """
     if binary is None:
-        rep.info("matrix_probe_skipped", "未指定 sing-box 可执行文件，跳过「矩阵 path 与内核」交叉对账")
+        # ⚠️ 这里**不能**只报 INFO 就走 —— 那条路会让「没装内核」看起来和「查过了、全对」
+        # 完全一样：矩阵被改坏、门禁全绿、退出码 0（实测过）。这正是 L25/L45 同形的
+        # 「静默失效比报错危险」，而且是本仓库最该避免的一种。
+        # 降级为 WARN 的代价：没装内核时门禁不再全净，`--run` 也会多一条 WARN。
+        # 这是**故意**的 —— 一条永远为真的绿灯等于没有灯。
+        rep.warn(
+            "matrix_probe_skipped",
+            "未指定 sing-box 可执行文件，「矩阵 path ⟺ 内核」交叉对账**没有执行**。"
+            "这一项是「上游改路径导致门禁静默失声」的唯一检测器，跳过它等于放行一个"
+            "无法验证的状态。要真跑请把路径写进 local/.singbox-bin 或设 SINGBOX_BIN",
+        )
         return
     checked = 0
     probed = 0
@@ -1182,7 +1216,7 @@ def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
                 info = {}
                 for _label, cfg in cands:
                     probed += 1
-                    k, i2, out = _probe_verdict(binary, cfg, tmp)
+                    k, i2, out = _probe_verdict(binary, cfg, tmp, target_version)
                     if k is None:
                         rep.warn("matrix_path_probe_error", out)
                         known = None
