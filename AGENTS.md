@@ -6,7 +6,7 @@
 ## 0. 一句话任务
 
 用户只给**节点分享链接**（`vmess://` `vless://` `trojan://` `hysteria2://` `ss://` `anytls://` …）
-和**想要的落点**（🚀 Proxy / 🤖 AI / 🚫 AD 三个分流组之一），你负责：
+和**想要的落点**（代理组 / 智能组 / 去广告组 三个分流组之一），你负责：
 
 0. **先读 `docs/LESSONS.md`（事故台账）** —— 里面逐条记录了历史上真机上出过的事故、
    根因、以及对应的门禁 code。开工前扫一遍，别重犯。
@@ -47,7 +47,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
 | 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」**。<br>**唯一例外（允许且推荐）**：用 `log.level = debug` 读 **sing-box 自己的日志**来判断「本机往出站递了什么」——`router: resolved [...]` 与 `outbound connection to <目标>` 是本机产生的记录，不受网关劫持影响（能据此区分「目标是 IP 字面量」还是「目标是域名」）。证据须存档到 `docs/evidence/` |
 | 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
-| 13 | **日志里出现 `using outbound/selector[🚫 AD]: operation not permitted` 是正常的**，不是 🚫 AD 组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修” 🚫 AD 组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**🚫 AD 组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
+| 13 | **日志里出现 `using outbound/selector[🚫 AD]: operation not permitted` 是正常的**，不是去广告组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修”去广告组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**去广告组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
 | 14 | **「只走 IPv4」必须端到端**。`dns.strategy: "ipv4_only"` 只管本地 DNS；目标域名默认是**原样交给代理服务端**的。必须在 `route.rules` 里加 `{"action": "resolve", "strategy": "ipv4_only"}`，**位置紧跟 `hijack-dns` 之后、排在所有 `route`/`reject`/`bypass` 之前**（放末尾等于没放 —— 首个 route/reject 命中即 `break match`，见 L18）。`route/conn.go:103-104` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，目标变成 IPv4 字面量。`strategy` 不要省。`audit.py` 有 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` / `resolve_not_first` 门禁兜底 |
 | 15 | **出口 IP 的地址族不由客户端决定**。`resolve` 只能保证「本地 → 服务端」这一段是 IPv4 字面量（日志可证）；「服务端 → 目标站」那一段完全由服务端决定（NAT64、服务端 `sniff` 后自行重解析域名等）。⇒ 看到 IPv6 出口时**不要在本机配置里找原因、更不要为了它继续加固本地**，先确认该地址是不是节点本身的 AAAA 记录；要改就去服务端禁用 IPv6 出网。**已证实**：本地已全 IPv4 仍出现 VPS 自身 AAAA 出口；**未证实**：服务端为何在某些时段选 IPv6、禁用 IPv6 是否就能解决（属建议，未在真实 VPS 验证）。详见 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
 | 16 | **上游新增功能必须显式写下「启用 / 不启用 / 必须跟随」**。上游发新版本时，除了「哪些字段要删」（`deprecated`/`removed`），还有「多了哪些新能力」——后者**没有默认答案**，不写就是隐式选择了“不启用”，理由往往是“没注意到”。⇒ 每个新功能在 `docs/version-matrix.json` 里建一条 `kind: "new"`（必填 `adopt` + `reason`，有字段可检测的还要 `expect`），并在 `docs/DECISIONS.md` 记下理由与备选方案。`audit.py` 有 `new_feature_without_adoption` / `new_feature_expect_invalid` / `new_feature_decision_overdue` / `new_feature_uncovered` / `decision_without_record` 门禁兜底 |
@@ -55,6 +55,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 | 18 | **依据有优先级：官方文档 > 官方源码 > 本仓文档**。三条冲突时以官方为准，并**当场修本仓文档**，不要留「以本仓结论为准」的余地。① 官方 `docs/clients/{apple,android,desktop}/` 与 `docs/configuration/`（本仓快照见 `docs/upstream-*.md`）；② 内核源码 `protocol/tun/`、`route/` 与官方客户端源码 `sing-box-for-apple` / `sing-box-for-android`；③ 本仓 `docs/*.md`。**本仓的每一条经验结论都必须能追到 ①②**，追不到的不写（写成「未验证」而不是写成结论）。 |
 | 19 | **平台差异必须同时落三处，缺一就是静默失效**：① 改 `profiles/1.14/*-lazy.json`；② 在 `docs/PLATFORM-MATRIX.md` §4 表里加**一行**（第一列必须是 `` `JSON 路径` ``，单元格必须是 `` `JSON 字面量` `` 或 `**删除**` —— 说明文字写在表外）；③ 需要时在 `tools/audit.py` 加门禁。`matrix_platform_stale` 逐格对账、`profile_drift` 反向兜底（§4 未登记的差异一律 ERROR）。**平台的能力清单（§1/§1a/§2/§2a）无法机器核对**（没有可靠的官方机读源），只能人工按「来源」一栏复核 —— 别误以为它也上了锁。 |
 | 20 | **三个分流组的 tag 是不可随手改的契约**：规范名逐字是 `🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + **一个 ASCII 空格** + 名字）。它们是 `route.final`、`route.rules[].outbound`、`dns.rules` 与规则集的引用目标，写错一个字符就等价于「tag 找不到」（`check` 不报，运行时报 `outbound not found` 或静默落到 `final`）；同时它们也是客户端策略组列表里的显示名，所以统一带 emoji 以便与节点 tag 区分。**改 tag 必须端到端改**：`profiles/1.14/*-lazy.json` + `templates/groups.json` + `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）+ `AGENTS.md` / `README.md` / `docs/WORKFLOW.md` / `docs/PROTOCOL-MAPPING.md` / `nodes/nodes.example.json` + 仓库外 `local/` 下的运行配置；门禁 `group_tag_incomplete` / `template_group_tag_incomplete` 盯形态，`template_profile_group_missing` / `profile_group_not_in_template` 盯模板 ⟺ 配置一致。**引用面必须靠 grep 列，不能靠记忆**（L35 事故）：这个 tag 会出现的位置不止「组定义 + `route.rules`」，`dns.servers[].detour` 就是一个反直觉的落点 —— `grep -c '<tag>' ` 全仓 JSON 逐个确认为止；引用的完整性由 `dns_server_detour_missing` / `domain_resolver_missing` 兜住 |
+| 21 | **门禁的价值全在「判据与外部事实一致」，而这件事没人替你验**。`audit.py` 里有三类门禁，维护责任不同：<br>① **版本驱动型**（`deprecated`/`removed`/`kind=new`）—— 上游发新版时**自动跟着变**，因为判据取自 `docs/version-matrix.json` 的 `deprecated_in`/`removed_in`/`since`；<br>② **外部事实硬编码型**（平台能力判据、规则集顺序、平台差异矩阵 §4）—— **必须人工复核**，而且已有兜底：矩阵 §4 由 `matrix_platform_stale`/`profile_drift` 逐格对账，平台能力的权威源 `docs/clients/{apple,android}/features.md` 已纳入 `tools/upgrade-check.py` 的快照跟踪；<br>③ **本仓库结构性约定**（组 tag 形态、去广告组只留 `block`、目录用途）—— 与内核版本无关，只需维护本仓内部一致。<br>⚠️ **最危险的一种失效是「门禁还在、判据已经落空」**：矩阵的 `path` 若被上游改名或搬走，`find_paths` 永远返回空，那条门禁**静默失声**而全仓照样全绿（L39）。⇒ 所以有一条铁律：**凡是把外部事实写进代码/文档的地方，都要配一个探针或快照**；`audit_matrix_paths()`（按 `path` 造最小探针交给内核认）与 `audit_tools()`（工具自检）、`LEAK_SCAN_START_DATE` 的时区自检是同一思路 —— 不靠人记得，靠机器每次跑都问一遍 |
 
 ### 固定规则集清单（不要自行改动）
 
@@ -74,7 +75,7 @@ python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 
 ```
 jinx-direct     → outbound direct      ✅ 白名单放行，必须最先
-jinx-ads        → outbound 🚫 AD          🚫 拦截（该组出口只有 block）
+jinx-ads        → outbound 🚫 AD          🚫 拦截（去广告组出口只有 block）
 awanue-ads      → outbound 🚫 AD          🚫 拦截（必须排在 jinx-ads 之后）
 geosite-cn      → outbound direct      🚦 常规分流，必须在拦截之后
 ```
@@ -126,9 +127,9 @@ local/                        ← 【不提交】本机真实节点配置（.git
 3. 读 profiles/<ver>/{platform}-lazy.json        # 拿骨架
 4. 按映射表把链接解成 outbound，插到出站列表
    —— ⚠️ 若用户给了一份已有配置让你改，**先做字段差异比对**（见 §0.1 铁律 0）
-5. 把 outbound tag 加进用户指定的分流组（🚀 Proxy / 🤖 AI / 🚫 AD）的 outbounds 数组
-   —— `🚀 Proxy` 与 `🤖 AI` **都是 urltest 组**，节点直接加进去就是加进自动测速（不再有单独的 `Auto` 组）；
-      `🤖 AI` 只放用户指定给 AI 的节点，**默认不要引用 `🚀 Proxy`**
+5. 把 outbound tag 加进用户指定的分流组的 outbounds 数组（组名见铁律 6）
+   —— 代理组与智能组**都是 urltest**，节点直接加进去就是加进自动测速（不再有单独的 `Auto` 组）；
+      智能组只放用户指定给 AI 的节点，**默认不要引用代理组**
 6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
 7. 输出完整 JSON（不是 diff、不是片段）
 
@@ -239,6 +240,9 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 # 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
 # 并逐个 compile tools/*.py + 对 diff_config.compare / DIRECT_NON_EMPTY_KEYS 做不变量自检
 #   （门禁自己不被人查，L25：静默失效比报错危险）
+# 并验「矩阵的 path 在锁定内核上还找得到」（matrix_path_unreachable）：
+# 上游把字段改名/搬走时，find_paths 永远返回空、那条门禁会**静默失声**，
+# 而配置侧的门禁全部照旧全绿 —— 只有矩阵与内核交叉比对才发现（L39）
 # 并校验 docs/PLATFORM-MATRIX.md §4 表与三份 profile 的实际值逐格一致（matrix_platform_stale），
 # 以及三份 profile 的分流组与 templates/groups.json 一致（template_profile_group_missing 等）；
 # 反向由 profile_drift / profile_group_not_in_template 兜底 —— §4 未登记的差异、模板未登记的组，
@@ -253,7 +257,9 @@ sing-box check -c profiles/1.14/ios-lazy.json
 #   （会自动把 tun 入站临时换成 mixed、cache_file 指到临时目录；会真的连网拉规则集）
 #   ⚠️ 必须先 git add -A 再跑 —— CI 是 checkout 之后跑的，而防泄漏扫查要看文件名单，
 #      不先 add 就会「本地绿、CI 红」（L29 / D14）
-git add -A && python tools/audit.py --run --run-seconds 20
+git add -A && bash tools/check-all.sh --run        # 推荐：上面几件事串成一条命令
+#   ↑ 静态门禁 + 负向回归（25 用例）+ 启动级验证 + 逐份 sing-box check；任一步失败都会点名
+#   本机没有 bin/ 也没进 PATH 时，把路径写进 local/.singbox-bin（不提交，见铁律 7）
 
 # 上游巡检 / 重新生成人读版矩阵
 python tools/upgrade-check.py

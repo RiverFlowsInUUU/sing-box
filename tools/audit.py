@@ -31,6 +31,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "docs" / "version-matrix.json"
 PROFILES = ROOT / "profiles"
+# local/ 不进仓库（.gitignore），但里面的配置是**用户真机实际运行的**。
+# 门禁必须覆盖它，否则「仓库全绿、真机炸」会持续发生（L35）。
+LOCAL = ROOT / "local"
 PLACEHOLDER_DOMAINS = (".example.com", ".example.org", ".example.net", ".invalid", ".test", ".localhost")
 ALLOWED_RULESET_PREFIXES = (
     "https://testingcf.jsdelivr.net/gh/",
@@ -161,18 +164,26 @@ def resolve_owner(cfg, real_path: str):
 
 
 class Report:
+    """审计报告。每条消息可选带 `where`（`文件:行号`）——
+
+    为什么加 `where`（七条改造第 6 条「门禁输出『改哪里』而不是『哪里错』」）：
+    门禁原本只说 `§4 说 desktop 的 …`，读的人还得回去搜行号。带上定位后，
+    IDE/终端可以直接点开。它同时是**修法提示**：不说位置，等于把查找成本转给人。
+    格式统一 `相对路径:行号`（与编译器输出同形，便于 `grep` 与编辑器识别）。
+    """
+
     def __init__(self, name):
         self.name = name
-        self.items = []  # (level, code, message)
+        self.items = []  # (level, code, message, where)
 
-    def error(self, code, msg):
-        self.items.append(("ERROR", code, msg))
+    def error(self, code, msg, where=None):
+        self.items.append(("ERROR", code, msg, where))
 
-    def warn(self, code, msg):
-        self.items.append(("WARN", code, msg))
+    def warn(self, code, msg, where=None):
+        self.items.append(("WARN", code, msg, where))
 
-    def info(self, code, msg):
-        self.items.append(("INFO", code, msg))
+    def info(self, code, msg, where=None):
+        self.items.append(("INFO", code, msg, where))
 
     @property
     def errors(self):
@@ -184,6 +195,14 @@ class Report:
 
     def ok(self):
         return not self.errors
+
+
+def _loc(path, line=None) -> str:
+    """拼一个「文件:行号」定位串（相对仓库根，统一用 `/`）。"""
+    p = str(path).replace("\\", "/")
+    if p.startswith(str(ROOT).replace("\\", "/") + "/"):
+        p = p[len(str(ROOT).replace("\\", "/")) + 1:]
+    return f"{p}:{line}" if line else p
 
 
 # ---------------------------------------------------------------- 主审查
@@ -330,8 +349,8 @@ def _audit_jinx(route, rep: Report):
 
     官方要求（https://github.com/RiverFlowsInUUU/Jinx#-规则顺序）：
         1 jinx-direct   → direct  白名单先放行
-        2 jinx-ads      → AD 组   拦截（AD 的唯一出口是 block）
-        3 awanue-ads    → AD 组   拦截（秋风判定不同，会拦掉 Jinx 白名单的 8 个域，必须排后面）
+        2 jinx-ads      → 🚫 AD 组  拦截（🚫 AD 的唯一出口是 block）
+        3 awanue-ads    → 🚫 AD 组  拦截（秋风判定不同，会拦掉 Jinx 白名单的 8 个域，必须排后面）
         4 geosite-cn    → direct  常规分流，必须排在拦截之后
     """
     rss = route.get("rule_set") or []
@@ -368,7 +387,7 @@ def _audit_jinx(route, rep: Report):
                 f"route.rule_set[{i}] ({tag}) 必须是 format='source'（Jinx 发布的是 JSON 源格式，非 .srs）",
             )
 
-    # route 层：广告拦截集只能落到 AD 组（唯一出口是 block）或直接 reject
+    # route 层：广告拦截集只能落到去广告组（唯一出口是 block）或直接 reject
     #     （DNS 层另有一套约束，见 _audit_dns_adblock / docs/LESSONS.md L28）
     for i, r in enumerate((route.get("rules") or [])):
         if not isinstance(r, dict):
@@ -815,7 +834,7 @@ def audit_repo_rules(cfg, rep: Report):
     if dns_final and dns_final not in dns_tags:
         rep.error("dns_final_missing", f"dns.final = {dns_final!r} 不在 dns.servers 中")
 
-    # 4) AD 组只能放 block（m07194：删掉 direct）；默认值必须是 block，否则整个去广告链路静默失效
+    # 4) 去广告组只能放 block（m07194：删掉 direct）；默认值必须是 block，否则整个去广告链路静默失效
     for i, o in enumerate(outs):
         if not isinstance(o, dict):
             continue
@@ -830,7 +849,7 @@ def audit_repo_rules(cfg, rep: Report):
                     f"广告拦截组不得放入代理节点，也不要放 direct（m07194：{GROUP_AD} 只要 {GROUP_AD_DEFAULT} 作出口）",
                 )
             # 详见 docs/LESSONS.md L17：default 被改成 direct（或写了个不存在的 tag）时，
-            # 规则照样命中 AD 组，但连接被放行 —— 没有任何报错，广告静默漏过。
+            # 规则照样命中 🚫 AD 组，但连接被放行 —— 没有任何报错，广告静默漏过。
             if o.get("default") not in (None, GROUP_AD_DEFAULT):
                 rep.error(
                     "ad_group_default_not_block",
@@ -893,7 +912,7 @@ def audit_repo_rules(cfg, rep: Report):
     # 6b) resolve 必须在第一个 route/reject/hijack-dns/bypass 之前（见 docs/LESSONS.md L18）
     #     源码 route/route.go:670-705：只有 route / reject / hijack-dns / bypass 才 `break match`，
     #     resolve 是「继续匹配」的中间动作。所以放在末尾的 resolve **只会作用于前面所有规则都没命中的流量**
-    #     （即最终落到 final 的那部分）。任何走 route(AI 组)/route(AD 组)/route(direct) 的连接
+    #     （即最终落到 final 的那部分）。任何走 route(🤖 AI 组)/route(🚫 AD 组)/route(direct) 的连接
     #     都带着域名发给代理服务端，服务端可以自己选 IPv6 —— 这正是「配了 ipv4_only 却仍看到 IPv6 出口」的原因。
     if resolve_rules:
         rules = route.get("rules", [])
@@ -919,7 +938,7 @@ def audit_repo_rules(cfg, rep: Report):
                 f"route.rules[{first_resolve}] 是 resolve，但它排在 route.rules[{first_blocking}] "
                 f"（{rules[first_blocking].get('action') or '条件规则默认 route'}）之后："
                 "首个 route/reject/hijack-dns/bypass 命中即 break match，后面的 resolve 永远不会执行，"
-                "命中 AI 组/AD 组/direct 的域名仍会被原样交给代理服务端解析（服务端可用 IPv6 出口）。"
+                "命中智能组/去广告组/direct 的域名仍会被原样交给代理服务端解析（服务端可用 IPv6 出口）。"
                 "resolve 必须紧跟 hijack-dns，排在所有 route/reject 之前（详见 docs/LESSONS.md L18）",
             )
 
@@ -935,9 +954,9 @@ GROUP_AD = "🚫 AD"
 GROUP_TAGS = (GROUP_PROXY, GROUP_AI, GROUP_AD)
 # 组的 outbounds 里只允许出现真实节点，不允许嵌套组（urltest 套 urltest 会串联两次测速）
 NO_NESTING_GROUPS = GROUP_TAGS
-# 固定组的类型不允许被改（m02132：AI 与 Proxy 一样是 urltest，不再是指向 Proxy 的 selector）
+# 固定组的类型不允许被改（m02132：智能组与代理组一样是 urltest，不再是指向代理组的 selector）
 GROUP_TYPES_REQUIRED = {GROUP_PROXY: "urltest", GROUP_AI: "urltest", GROUP_AD: "selector"}
-# AD 组只允许一个出口（m07194）：block。direct 曾被放在这里作为「放行」档，
+# 去广告组只允许一个出口（m07194）：block。direct 曾被放在这里作为「放行」档，
 # 但它会让 AD 组变成一个用户看不出差别的开关，且任何误选都会让广告静默直连。
 GROUP_AD_OUTBOUNDS = ("block",)
 GROUP_AD_DEFAULT = "block"
@@ -985,11 +1004,237 @@ def audit_loopback_guard(cfg, rep: Report):
     )
 
 
+def _probe_candidates(path: str):
+    """把矩阵里的一个 path 模式变成若干「探针配置」。
+
+    为什么要探针：矩阵的 `path` 是门禁的唯一抓手（`audit_matrix` 全靠 find_paths 去找字段）。
+    上游一旦重命名或删除字段，find_paths 就永远返回空 —— `kind=deprecated` 的条目**静默失声**
+    （变成死门禁，L34 同形），`kind=new expect=absent` 的反而**假绿**，因为本来就该找不到。
+    此前没有任何门禁验证「矩阵的 path 在锁定的内核上仍然可达」。
+
+    做法：不读真实配置，而是**按 path 注入**一个最小探针，交给 `sing-box check` 判：
+      · 内核说 unknown field "<leaf>"                    → 它不认识这个字段；
+      · 内核说 ... is deprecated in sing-box A and will be removed in B → 认识且已废弃；
+      · 内核毫无意见                                      → 认识。
+    把这三类信号与矩阵自报的 `deprecated_in` / `removed_in` / `since` 交叉比对，
+    就能在没有服务端日志、没有上游 changelog 的情况下发现「门禁与内核脱节」。
+
+    返回 [(说明, 探针配置)]；模式太复杂无法注入时返回 []（由调用方报 WARN，不静默放过）。
+    """
+
+    def build(segs):
+        """自底向上构造：返回「该段及其之后」对应的值；无法构造返回 None。"""
+        if not segs:
+            return 0  # 叶子一律给 0，让内核只看「认不认识这个名字」
+        seg = segs[0]
+        rest = segs[1:]
+        if seg in ("*", "**"):
+            return None  # 通配由调用方展开
+        m = re.match(r"^([A-Za-z0-9_\-]*)(?:\[([^\]]*)\])?$", seg)
+        if not m:
+            return None
+        key, flt = m.group(1), m.group(2)
+        child = build(rest)
+        if child is None:
+            return None
+        if flt is None:
+            return {key: child} if key else None
+        if flt == "":
+            item = child
+        else:
+            m2 = re.match(r"^([A-Za-z0-9_]+)=(.+)$", flt)
+            if not m2:
+                return None
+            item = dict(child) if isinstance(child, dict) else {"_v": child}
+            item[m2.group(1)] = m2.group(2)
+        return {key: [item]}
+
+    segs = path.split(".")
+    if "**" in segs:
+        # ** 语义是「任何一层」，所以把尾段挂到几个典型宿主上，任一命中即算可达。
+        i = segs.index("**")
+        body = build(segs[i + 1:])
+        if body is None or not isinstance(body, dict):
+            return []
+        hosts = (
+            ("根", "root"),
+            ("inbounds[type=tun]", "inbounds"),
+            ("outbounds[type=direct]", "outbounds"),
+            ("dns.rules[0]", "dnsrules"),
+            ("route.rules[0]", "routerules"),
+        )
+        out = []
+        for label, kind in hosts:
+            if kind == "root":
+                cfg = {}
+                tgt = cfg
+            elif kind == "inbounds":
+                cfg = {"inbounds": [{"type": "tun"}]}
+                tgt = cfg["inbounds"][0]
+            elif kind == "outbounds":
+                cfg = {"outbounds": [{"type": "direct"}]}
+                tgt = cfg["outbounds"][0]
+            elif kind == "dnsrules":
+                cfg = {"dns": {"rules": [{}]}}
+                tgt = cfg["dns"]["rules"][0]
+            else:
+                cfg = {"route": {"rules": [{}]}}
+                tgt = cfg["route"]["rules"][0]
+            tgt.update(body)
+            out.append((label, cfg))
+        return out
+
+    probe = build(segs)
+    if not isinstance(probe, dict):
+        return []
+    return [("根", probe)]
+
+
+def _probe_verdict(binary: str, cfg, tmp: Path):
+    """跑一次探针，返回 (字段是否被内核认识, 内核自报的废弃/移除版本, 原始输出)。
+
+    `sing-box check` 的错误文本就是判据；上游改文案会在这里暴露（配 negtest 的用例）。
+    """
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    try:
+        p = subprocess.run(
+            [binary, "check", "-c", str(tmp)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as ex:
+        return None, {}, "探针无法执行：" + str(ex)
+    out = re.sub(r"\x1b\[[0-9;]*m", "", (p.stdout or "") + (p.stderr or ""))
+    dep = re.search(r"deprecated in sing-box (\d+\.\d+\.\d+)", out)
+    rem = re.search(r"removed in sing-box (\d+\.\d+\.\d+)", out)
+    return ("unknown field" not in out), {
+        "deprecated_in": dep.group(1) if dep else None,
+        "removed_in": rem.group(1) if rem else None,
+    }, out
+
+
+def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
+    """矩阵 path 与锁定内核的「字段实际是否存在」交叉对账。
+
+    这是「内核升级导致门禁失效」的**检测器**：矩阵与内核任何一边变了这里都会响。
+
+    判据只取一个方向 —— **内核已经不认这个字段，而矩阵还在要求门禁去查它**：
+    此时 `find_paths` 永远返回空，`kind=deprecated/removed` 的条目会静默失声
+    （门禁还在、但永远不会响，L34 同形），而这**在仓库里没有任何其他信号**。
+
+    刻意**不报**的两种情况：
+      · 矩阵说「已移除」，内核仍照收 —— 这在本项目里是**常态**：sing-box 用 migration 保住旧字段，
+        就是为了让人误用时不至于炸；正因如此才需要 `kind=deprecated` 门禁，两者不矛盾。
+        早先误把这当 ERROR，一跑就 17 条假报警，已删。
+      · 两边都不提版本号 —— 信息不足，不判。
+    """
+    if binary is None:
+        rep.info("matrix_probe_skipped", "未指定 sing-box 可执行文件，跳过「矩阵 path 与内核」交叉对账")
+        return
+    checked = 0
+    probed = 0
+    unreachable = []
+    unprobeable = []
+    tmp = LOCAL / ".matrix-probe.json"
+    try:
+        for e in matrix.get("entries") or []:
+            path = e.get("path")
+            if not path:
+                continue
+            paths = path if isinstance(path, list) else [path]
+            for p in paths:
+                if not p or p.strip("*") == "":
+                    continue
+                eid = str(e.get("id"))
+                # 只对「当前版本上这个字段本该已经存在」的条目做可达性判定。
+                declared = e.get("deprecated_in") or e.get("removed_in") or e.get("since")
+                if not declared or not ver_ge(target_version, declared):
+                    continue
+                cands = _probe_candidates(p)
+                if not cands:
+                    unprobeable.append(eid + " 的 " + p)
+                    continue
+                m = re.search(r"([A-Za-z0-9_]+)(?:\[[^\]]*\])?$", p)
+                leaf = m.group(1) if m else None
+                known = None
+                info = {}
+                for _label, cfg in cands:
+                    probed += 1
+                    k, i2, out = _probe_verdict(binary, cfg, tmp)
+                    if k is None:
+                        rep.warn("matrix_path_probe_error", out)
+                        known = None
+                        break
+                    # 内核可能报多个 unknown field。只有「报的恰好是这个叶子」才算字段不认；
+                    # 报的是**别的**键（例如把 tls 塞进不接受 tls 的宿主）说明探针本身不合法，
+                    # 换下一个宿主再试。此前只查「输出里是否出现 leaf 名」，会把这类误判成「认识」。
+                    unknown = set(re.findall(r'unknown field "([^"]+)"', out))
+                    if unknown and leaf not in unknown:
+                        continue
+                    if not unknown:
+                        known = True
+                        info = i2
+                        break
+                    known = False
+                if known is None:
+                    continue
+                checked += 1
+                if not known:
+                    unreachable.append((eid, p, declared))
+                    continue
+                core_dep, core_rem = info.get("deprecated_in"), info.get("removed_in")
+                declared_removed = e.get("removed_in")
+                # 内核自报的版本号比矩阵更早时，矩阵多半漏了更早的废弃点（只提醒，不判罚）。
+                if core_rem and declared_removed and not ver_ge(core_rem, declared_removed):
+                    rep.warn(
+                        "matrix_version_mismatch",
+                        "条目 " + eid + " 的 removed_in：矩阵写 " + declared_removed
+                        + "，内核自报 " + core_rem + "（以后者为准）",
+                    )
+                elif core_dep and declared and not ver_ge(core_dep, declared):
+                    rep.warn(
+                        "matrix_version_mismatch",
+                        "条目 " + eid + " 的 deprecated_in：矩阵写 " + declared
+                        + "，内核自报 " + core_dep + "（以后者为准）",
+                    )
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+    for eid, p, declared in unreachable:
+        rep.error(
+            "matrix_path_unreachable",
+            "矩阵要求门禁去查 " + eid + " 的 " + p + "（自称从 " + declared
+            + " 起存在/废弃），但 " + target_version + " 的内核已经不认这个字段了 —— "
+            "find_paths 永远返回空，**这条门禁已经悄悄失效**。"
+            "多半是上游改过路径或名字：请对照内核源码更新 path/replacement，或把它标记为彻底移除",
+            where="docs/version-matrix.json",
+        )
+    for item in unprobeable:
+        rep.warn(
+            "matrix_path_unprobeable",
+            "路径 " + item + " 无法构造探针（含通配或复杂的过滤器），"
+            "它是否仍对得上当前内核**没人能验**；建议拆成可注入的简单路径",
+            where="docs/version-matrix.json",
+        )
+    if not rep.errors and not rep.warns:
+        rep.info(
+            "matrix_path_ok",
+            "矩阵 path 与内核 " + target_version + " 交叉对账通过（"
+            + str(checked) + " 条作过探针，共 " + str(probed) + " 次注入）",
+        )
+
+
 def audit_template(rep: Report):
     """校 templates/groups.json（固定分流组骨架）。
 
     这份文件是每个 profile 的出站骨架，它自身写错了，生成的配置就会集体写错。
-    重点：Proxy 必须是 urltest（m01246 起不再有单独的 Auto 组）；组 tag 必须带 emoji 前缀。
+    重点：代理组必须是 urltest（m01246 起不再有单独的 Auto 组）；组 tag 必须带 emoji 前缀。
     """
     path = ROOT / "templates" / "groups.json"
     if not path.exists():
@@ -1115,6 +1360,18 @@ def audit_platform_caps(cfg, rep: Report, platforms):
 
 PLATFORM_MATRIX = ROOT / "docs" / "PLATFORM-MATRIX.md"
 MATRIX_SEC4_HEAD = "## 4. 三平台配置差异速查（本仓库实际做法）"
+
+
+def _matrix_sec4_lineno():
+    """§4 表头的行号（用于把「差异没登记」直接定位到该加行的位置）。"""
+    if not PLATFORM_MATRIX.exists():
+        return 1
+    text = PLATFORM_MATRIX.read_text(encoding="utf-8")
+    i = text.find(MATRIX_SEC4_HEAD)
+    return text.count(chr(10), 0, i) + 1 if i >= 0 else 1
+
+
+MATRIX_SEC4_LINENO = _matrix_sec4_lineno()
 PROFILE_ORDER = ("desktop", "android", "ios")
 _PROFILE_DIR = "1.14"
 class _Missing:
@@ -1165,19 +1422,25 @@ def _resolve_path(cfg, path: str):
 
 
 def _sec4_rows():
-    """从 docs/PLATFORM-MATRIX.md 的 §4 表抽出 [(路径, 是否条数, {平台: 单元格})]。"""
+    """从 docs/PLATFORM-MATRIX.md 的 §4 表抽出 [(路径, 是否条数, {平台: 单元格}, 行号)]。
+
+    行号是给「门禁输出『改哪里』」用的（七条改造第 6 条）：报错时必须能直接跳到 §4 那一行，
+    否则读的人得回文件里搜。
+    """
     if not PLATFORM_MATRIX.exists():
         return None
     text = PLATFORM_MATRIX.read_text(encoding="utf-8")
     i = text.find(MATRIX_SEC4_HEAD)
     if i < 0:
         return None
+    # 先算 §4 起始行号（1-based），表格行号 = 起始行 + 段内偏移。
+    sec_start_lineno = text.count("\n", 0, i) + 1
     body = text[i:]
     end = body.find("\n## ", 1)
     if end > 0:
         body = body[:end]
     rows = []
-    for line in body.splitlines():
+    for offset, line in enumerate(body.splitlines()):
         line = line.strip()
         if not line.startswith("|") or set(line) <= set("|- "):
             continue
@@ -1189,7 +1452,8 @@ def _sec4_rows():
         m = re.match(r"^`([^`]+)`(\s*条数)?$", cells[0])
         if not m:
             continue
-        rows.append((m.group(1), m.group(2) is not None, dict(zip(PROFILE_ORDER, cells[1:]))))
+        rows.append((m.group(1), m.group(2) is not None,
+                     dict(zip(PROFILE_ORDER, cells[1:])), sec_start_lineno + offset))
     return rows
 
 
@@ -1232,39 +1496,45 @@ def audit_matrix_platform(rep: Report):
         return
 
     declared = set()
-    for path, is_count, cells in rows:
+    for path, is_count, cells, lineno in rows:
         declared.add(path)
+        # 门禁输出「改哪里」：§4 的每一行都带原文件行号（七条改造第 6 条）。
+        loc = f"docs/PLATFORM-MATRIX.md:{lineno}"
+
+        def _err(code, msg, _loc=loc):
+            rep.error(code, msg, where=_loc)
+
         for k in PROFILE_ORDER:
             raw = cells[k]
             actual = _resolve_path(cfgs[k], path)
             if is_count:
                 m = re.match(r"^`(\d+)`$", raw)
                 if not m:
-                    rep.error(
+                    _err(
                         "matrix_platform_stale",
                         f"§4 的 `{path}` 条数 / {k} 单元格格式不认识：{raw!r}（应为 `数字`）",
                     )
                     continue
                 if actual is _MISSING:
-                    rep.error("matrix_platform_stale", f"§4 说 {k} 有 `{path}`，实际不存在")
+                    _err("matrix_platform_stale", f"§4 说 {k} 有 `{path}`，实际不存在")
                 elif not isinstance(actual, (list, dict)):
-                    rep.error("matrix_platform_stale", f"§4 说 {k} 的 `{path}` 是条数，实际不是容器")
+                    _err("matrix_platform_stale", f"§4 说 {k} 的 `{path}` 是条数，实际不是容器")
                 elif len(actual) != int(m.group(1)):
-                    rep.error(
+                    _err(
                         "matrix_platform_stale",
                         f"§4 说 {k} 的 `{path}` 是 {m.group(1)} 条，实际 {len(actual)} 条",
                     )
                 continue
             if raw.strip("*").strip() == "删除":
                 if actual is not _MISSING:
-                    rep.error(
+                    _err(
                         "matrix_platform_stale",
                         f"§4 说 {k} 的 `{path}` 应删除，实际存在：{actual!r}",
                     )
                 continue
             m = re.match(r"^`(.*)`$", raw)
             if not m:
-                rep.error(
+                _err(
                     "matrix_platform_stale",
                     f"§4 的 `{path}` / {k} 单元格格式不认识：{raw!r}"
                     f"（应为 `JSON 字面量` 或 删除；普通说明文字请写在表外）",
@@ -1277,12 +1547,12 @@ def audit_matrix_platform(rep: Report):
                 # 而写错（如 ture / ture）一样会因不相等而报错，不会静默放过。
                 expect = m.group(1)
             if actual is _MISSING:
-                rep.error(
+                _err(
                     "matrix_platform_stale",
                     f"§4 说 {k} 的 `{path}` 是 `{m.group(1)}`，实际该路径不存在",
                 )
             elif actual != expect:
-                rep.error(
+                _err(
                     "matrix_platform_stale",
                     f"§4 说 {k} 的 `{path}` 是 `{m.group(1)}`，实际是 {actual!r}",
                 )
@@ -1310,6 +1580,8 @@ def audit_matrix_platform(rep: Report):
             f"三份 profile 的 `{path}` 不一致（{vals[0]!r} / {vals[1]!r} / {vals[2]!r}），"
             f"但 docs/PLATFORM-MATRIX.md §4 表里没有登记这一项——"
             f"平台差异必须写进矩阵，否则没人知道它是有意为之还是漏改",
+            # 要改的位置是 §4 的**表**（要在那里加一行），不是某个 profile。
+            where=f"docs/PLATFORM-MATRIX.md:{MATRIX_SEC4_LINENO}",
         )
 
 
@@ -1336,18 +1608,22 @@ def audit_matrix_coverage(rep: Report):
         for ob in cfgs[k].get("outbounds") or []:
             if isinstance(ob, dict) and ob.get("type") in ("selector", "urltest"):
                 prof_groups[ob.get("tag")] = ob.get("type")
+        # 门禁输出「改哪里」：要改的是**配置**（profile），所以定位到出事的那份 profile。
+        cfg_loc = f"profiles/{_PROFILE_DIR}/{k}-lazy.json"
         for tag, typ in tpl_groups.items():
             if tag not in prof_groups:
                 rep.error(
                     "template_profile_group_missing",
                     f"{k}-lazy.json 缺模板里的分流组 `{tag}`——"
                     f"templates/groups.json 是本仓库对「该有哪些组」的唯一声明",
+                    where=cfg_loc,
                 )
             elif prof_groups[tag] != typ:
                 rep.error(
                     "template_profile_group_type",
                     f"{k}-lazy.json 的 `{tag}` 是 {prof_groups[tag]}，"
                     f"模板要求 {typ}（组类型是分流行为的开关，不是风格问题）",
+                    where=cfg_loc,
                 )
         for tag in prof_groups:
             if tag not in tpl_groups:
@@ -1355,6 +1631,7 @@ def audit_matrix_coverage(rep: Report):
                     "profile_group_not_in_template",
                     f"{k}-lazy.json 多了模板没登记的组 `{tag}`——"
                     f"要么把它加进 templates/groups.json，要么删掉",
+                    where=cfg_loc,
                 )
     if not rep.errors:
         rep.info("matrix_coverage_ok", f"三份 profile 的分流组与模板一致（{len(tpl_groups)} 个组）")
@@ -1924,6 +2201,178 @@ def audit_template_text(rep: Report):
         )
 
 
+def _tracked_files():
+    """返回「仓库里应当被文本级门禁扫描的文件」清单。
+
+    已跟踪 + 尚未 add 的新文件：只看 `git ls-files` 会漏掉“刚写好、还没 add”的新文档，
+    造成本地绿、CI 红（L29）。故两个来源都要。
+    调用方自己按后缀/前缀过滤（这里不预筛，保留全集才好排版）。
+    """
+    files, seen = [], set()
+    for args in (["git", "ls-files"],
+                 ["git", "ls-files", "--others", "--exclude-standard"]):
+        try:
+            out = subprocess.run(
+                args, cwd=str(ROOT), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=20,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        for f in out.splitlines():
+            if f.strip() and f not in seen:
+                seen.add(f)
+                files.append(f)
+    return files
+
+
+def _is_negative_fixture(path: str) -> bool:
+    """这个文件是不是「专门用旧名来验门禁」的负向样本。
+
+    判定靠**文件名**而不是目录，因为仓库的负向脚本有两种合法位置：
+      · `tools/negtest.py`  —— 常驻回归套件；
+      · `local/neg_*.py`、`local/*_negtest*` —— 一次性排查脚本（`local/` 不进仓库）。
+    用词根 `neg` + `test` 两处都覆盖，同时避开 `tools/audit.py` 的 framework 文件。
+    """
+    name = path.rsplit("/", 1)[-1].lower()
+    return name.startswith("neg") or "_neg" in name or "negtest" in name
+
+
+def audit_doc_group_names(rep: Report):
+    """扫全仓散文，拦「旧组名残留」。
+
+    为什么需要它：组改名（m07194）的真实成本 98% 在散文，不在配置——
+    JSON 引用位由 profile_drift / dangling_ref 一族盯着，而 19 个文件里
+    240 处 Markdown/注释里的组名**一处门禁都没有**。当时我手写了两版正则仍漏掉
+    `templates/groups.json:46` 的裸 `Proxy`，只能靠人肉 grep 逐轮找漏（铁律 20 整改）。
+
+    判定必须区分三种「看起来像旧名」的东西，误报比漏报更贵：
+      ㊀ 真·旧名残留  → 报错，要求改成规范名。
+      ㊁ 必须保留旧名的位置（下列豁免） → 放行：
+         · 「旧名 / 原话 / 改名之前」等**历史叙述**上下文——改了就篡改事实；
+         · 门禁自己的**反向检测字面量**（`legacy = {"Proxy","AI","AD"}`）——
+           它本来就是靠旧名来发现漏改，改成规范名就变成永远不响的死检查；
+         · `Proxy` 出现在 `NaiveProxy` / `OpenAI` 之类的**专有名词**里。
+      ㊂ 「AI」= 人工智能/助手（`给 AI 读的入口`、`任何人或任何 AI`）
+         → **根本不是组名**，绝不能改。
+
+    依赖的是「组名已是 emoji 形态」这个不变式：规范名 `🚀 Proxy` 里仍含 `Proxy`，
+    所以判「旧名」必须要求前面**没有 emoji 前缀**，不能只匹配裸词。
+    """
+    legacy = {"Proxy": GROUP_PROXY, "AI": GROUP_AI, "AD": GROUP_AD}
+    # ㊁ 豁免：这些上下文里出现的旧名是**正确的**，改了反而错
+    EXEMPT = (
+        "旧名", "原名", "原话", "改名", "更名", "之前叫", "曾经",
+        "detour not found", "not found:", "legacy", "保留名", "历史",
+        # 「由 `Proxy` / `AI` / `AD` 改成 …」式叙述：描述改名本身，必须保留旧名。
+        "由 `Proxy`", "由 `AI`", "由 `AD`", "tag 由", "的 tag 由",
+        # 「自己造成的悬空引用」类复盘：说的是事故发生时的旧名。
+        "仍指向", "已不存在", "不存在的 `", "早期", "当时",
+        # 「旧策略组选择会失效」：说的是客户端里残留的旧选择。
+        "旧策略组", "手动选过",
+    )
+    # 反引号包裹的**单个**裸组名（`` `AD` ``）是引用位还是叙述，靠上面 EXEMPT 区分。
+    # 这条不变式保证不会被误用：“🚀 AD” 不是合法规范名（emoji 与名字必须匹配）。
+    # ㊂ 「AI = 人工智能」判据：紧邻的搭配词（「给 AI 读的入口」「AI 类站点」「AI 助手」）
+    AI_AS_TOOL = re.compile(
+        r"(?:给|任何|或|让|由|是|本|个|读|入口|生成|助手|模型|来做写协流程拿到负责根据|类|的入口)"
+    )
+    pat = re.compile(r"(?<![A-Za-z0-9_])(Proxy|AI|AD)(?![A-Za-z0-9_])")
+    # ④ 只有「配置引用位」才报错。
+    #    理由：散文里用短称（「🚫 AD 组」「🚫 AD 里的 direct」）是可读的，强行全写成带 emoji
+    #    只会变成噪音；而真正造成 L35 事故的是**配置引用位**——
+    #    「jinx-ads → 🚫 AD」「outbound 🚫 AD」「selector[🚫 AD]」「`🚫 AD`」这些地方，
+    #    下一个读者会照抄进配置，留旧名就等于埋悬空引用。
+    CONFIG_REF = re.compile(
+        r"(?:→|->|=>|outbound\s*$|outbounds|\btag\b|detour|selector\[|route\(|final\s*$|\bdefault\b)"
+    )
+
+    # 4  「历史台账」豁免：docs/LESSONS.md 与 docs/DECISIONS.md 是**追加型历史记录**，
+    #   它们必须能写下旧名——「用户原话：给 Proxy 改名为🚀 Proxy」一旦把旧名改掉，
+    #   记载就变成假的；复盘条目里「早期 AI 实现成 selector(outbounds=[Proxy])」同理。
+    #   所以门禁只管**活文档**（下一个人会照着写新配置的那些）。
+    #   代价：历史文件里新写的旧名不会被机器抓到——可接受，因为那里本来就允许旧名。
+    HISTORICAL = {"docs/LESSONS.md", "docs/DECISIONS.md"}
+    files = [
+        f for f in _tracked_files()
+        if f.endswith((".md", ".json", ".py", ".sh", ".yml", ".yaml"))
+        and not f.startswith(("docs/upstream-", "archive/", "docs/evidence/"))
+        and f not in HISTORICAL
+        and f != "docs/schema.json"
+    ]
+    found = []
+    for f in files:
+        try:
+            text = (ROOT / f).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for m in pat.finditer(text):
+            name = m.group(1)
+            # 规范名是「emoji + 一个 ASCII 空格 + 名字」，所以向前看 2 个字符：
+            # 只看 1 个字符会漏掉那个空格，把 `🚀 Proxy` 里的 `Proxy` 误判成旧名。
+            if "🚀" in text[max(0, m.start() - 2): m.start()] \
+                    or "🤖" in text[max(0, m.start() - 2): m.start()] \
+                    or "🚫" in text[max(0, m.start() - 2): m.start()]:
+                continue
+            ctx = text[max(0, m.start() - 60): m.end() + 60]
+            context = text[max(0, m.start() - 60): m.end()].replace("\n", " ")
+            after = text[m.end(): m.end() + 12]
+            # 专有名词：NaiveProxy / OpenAI / ADGuard 等
+            if re.search(r"(?:Naive|Open|Ad)Proxy|##\s*AD|\.ad\b", ctx):
+                continue
+            # 「AI = 人工智能」：仅当没有组名语境的搭配
+            if name == "AI" and AI_AS_TOOL.search(context[-10:]) and not re.match(
+                r"\s*(?:分流)?组", after
+            ):
+                continue
+            # ㊁ 历史叙述上下文豁免
+            if any(k in ctx for k in EXEMPT):
+                continue
+            # ④ 只报配置引用位；散文短称不报（见 CONFIG_REF 注释）
+            #    ⚠️ 必须拿 `before` 去匹配，不能把名字拼上去再匹配：
+            #    `outbound\s*$` / `final\s*$` 这类锚定行尾的模式一旦拼上名字就永远不匹配。
+            #    （第一版正是这么写的，落点位置被改回旧名时静默放过 —— 反向自测才知道。）
+            before = text[max(0, m.start() - 30): m.start()]
+            is_config_ref = bool(CONFIG_REF.search(before))
+            # 「`🚫 AD`」这种反引号包裹的单组名（无 emoji）也算引用位
+            if before.endswith("`") and after.startswith("`"):
+                is_config_ref = True
+            # 反向检测字面量（`{"Proxy", "AI", "AD"}`）自带旧名——那正是它发现漏改的依据，
+            # 改成规范名就变成永远不响的死检查。
+            #   豁免按**「谁需要旧名」**判定，而不是按文件名硬编码：
+            #   ① 本文件（audit.py）自己持有 legacy 映射与反向字面量；
+            #   ② 任何专门造坏样本的文件（`tools/negtest.py`、`local/` 下的脚本）——
+            #      它们的**本职就是写出错误写法**，用规范名反而验不了门禁。
+            #      （negtest.py 上线后立刻被本门禁拦下，就是这个豁免缺失导致的；
+            #        若按文件名硬编码 `tools/negtest.py`，下一个负向脚本又会重踩。）
+            if f == "tools/audit.py" and re.search(r'\{\s*"Proxy"\s*,\s*"AI"\s*,\s*"AD"\s*\}', ctx):
+                continue
+            if _is_negative_fixture(f):
+                continue
+            if not is_config_ref:
+                continue
+            found.append((f, text[: m.start()].count("\n") + 1, name, context.strip()[-70:]))
+
+    if not found:
+        rep.info(
+            "doc_group_name_clean",
+            "全仓散文没有旧组名残留（🚀 Proxy / 🤖 AI / 🚫 AD 是唯一规范写法）",
+        )
+        return
+    for f, line, name, ctx in found[:40]:
+        rep.error(
+            "doc_group_name_stale",
+            f'{f}:{line} 出现旧组名 {name!r}（规范名是 {legacy[name]!r}）…{ctx}…'
+            "——组 tag 是 route.final / route.rules[].outbound / dns.servers[].detour 的引用目标，"
+            "散文里留旧名会让下一个读它的人照着改出悬空引用（铁律 20）",
+            where=f"{f}:{line}",
+        )
+    if len(found) > 40:
+        rep.error(
+            "doc_group_name_stale",
+            f"另有 {len(found) - 40} 处旧组名（共 {len(found)} 处），已截断显示",
+        )
+
+
 def audit_tools(rep: Report):
     """工具自检：让「工具」也被自己的门禁检查一道。
 
@@ -2123,6 +2572,13 @@ def find_singbox(explicit=None):
     cand = ROOT / "bin" / ("sing-box.exe" if os.name == "nt" else "sing-box")
     if cand.exists():
         return str(cand)
+    # 本机私有登记（local/ 在 .gitignore 里，所以绝对路径不会进仓库；见 L25）。
+    # 与 tools/check-all.sh 的解析顺序保持一致：两边行为不同会让人以为「一边能跑一边不能」。
+    local_bin = LOCAL / ".singbox-bin"
+    if local_bin.is_file():
+        first = local_bin.read_text(encoding="utf-8", errors="replace").splitlines()
+        if first and first[0].strip() and Path(first[0].strip()).exists():
+            return first[0].strip()
     return shutil.which("sing-box")
 
 
@@ -2165,8 +2621,8 @@ def main():
     lessons_rep = Report("docs/LESSONS.md")
     audit_lessons(lessons_rep)
     if lessons_rep.items and not args.json:
-        for lv, code, msg in lessons_rep.items:
-            print(f"[{lv[0]}] docs/LESSONS.md: {msg}")
+        for lv, code, msg, where in lessons_rep.items:
+            print(f"[{lv[0]}] docs/LESSONS.md: {msg}" + (f"   ← {where}" if where else ""))
     if not lessons_rep.ok():
         failed = True
 
@@ -2174,8 +2630,8 @@ def main():
     newfeat_rep = Report("docs/version-matrix.json")
     audit_new_features(newfeat_rep, matrix, version)
     if newfeat_rep.items and not args.json:
-        for lv, code, msg in newfeat_rep.items:
-            print(f"[{lv[0]}] docs/version-matrix.json: {msg}")
+        for lv, code, msg, where in newfeat_rep.items:
+            print(f"[{lv[0]}] docs/version-matrix.json: {msg}" + (f"   ← {where}" if where else ""))
     if not newfeat_rep.ok():
         failed = True
 
@@ -2183,7 +2639,7 @@ def main():
     decisions_rep = Report("docs/DECISIONS.md")
     audit_decisions(decisions_rep, matrix, version)
     if decisions_rep.items and not args.json:
-        for lv, code, msg in decisions_rep.items:
+        for lv, code, msg, where in decisions_rep.items:
             print(f"[{lv[0]}] docs/DECISIONS.md: {msg}")
     if not decisions_rep.ok():
         failed = True
@@ -2192,8 +2648,8 @@ def main():
     redact_rep = Report("仓库防泄漏扫查（git ls-files）")
     audit_redaction(redact_rep)
     if redact_rep.items and not args.json:
-        for lv, code, msg in redact_rep.items:
-            print(f"[{lv[0]}] {msg}")
+        for lv, code, msg, where in redact_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
     if not redact_rep.ok():
         failed = True
 
@@ -2202,8 +2658,8 @@ def main():
     tools_rep = Report("tools/*.py 自检")
     audit_tools(tools_rep)
     if tools_rep.items and not args.json:
-        for lv, code, msg in tools_rep.items:
-            print(f"[{lv[0]}] {msg}")
+        for lv, code, msg, where in tools_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
     if not tools_rep.ok():
         failed = True
 
@@ -2211,17 +2667,27 @@ def main():
     tpl_rep = Report("templates/groups.json 文字")
     audit_template_text(tpl_rep)
     if tpl_rep.items and not args.json:
-        for lv, code, msg in tpl_rep.items:
-            print(f"[{lv[0]}] {msg}")
+        for lv, code, msg, where in tpl_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
     if not tpl_rep.ok():
+        failed = True
+
+    # 散文里的旧组名残留（仓库级）：见 audit_doc_group_names 的 docstring。
+    # 组改名的真实成本 98% 在散文（240 处 / 19 个文件），此前零门禁。
+    doc_rep = Report("全仓散文的组名")
+    audit_doc_group_names(doc_rep)
+    if doc_rep.items and not args.json:
+        for lv, code, msg, where in doc_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
+    if not doc_rep.ok():
         failed = True
 
     # 平台差异矩阵对账（仓库级）：PLATFORM-MATRIX.md §4 ⟺ 三份 profile 的实际值。
     plat_rep = Report("docs/PLATFORM-MATRIX.md §4")
     audit_matrix_platform(plat_rep)
     if plat_rep.items and not args.json:
-        for lv, code, msg in plat_rep.items:
-            print(f"[{lv[0]}] {msg}")
+        for lv, code, msg, where in plat_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
     if not plat_rep.ok():
         failed = True
 
@@ -2229,9 +2695,19 @@ def main():
     cov_rep = Report("templates/groups.json ⟺ profiles")
     audit_matrix_coverage(cov_rep)
     if cov_rep.items and not args.json:
-        for lv, code, msg in cov_rep.items:
-            print(f"[{lv[0]}] {msg}")
+        for lv, code, msg, where in cov_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
     if not cov_rep.ok():
+        failed = True
+
+    # 矩阵 path 与内核「字段实际是否存在」的交叉对账（仓库级、与具体配置无关）。
+    # 这是「内核升级导致门禁失效」的检测器：矩阵与内核任何一边变了，这里都会响。
+    probe_rep = Report("docs/version-matrix.json path ⟺ 内核")
+    audit_matrix_paths(probe_rep, matrix, version, None if args.no_check else find_singbox(args.singbox))
+    if probe_rep.items and not args.json:
+        for lv, code, msg, where in probe_rep.items:
+            print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
+    if not probe_rep.ok():
         failed = True
 
     if args.files:
@@ -2239,7 +2715,16 @@ def main():
         # 送进同一套检查流程，避免出现“模板自己违规却没人管”。
         targets = [Path(f) for f in args.files]
     else:
+        # ⚠️ 扫描范围必须等于「真实会被使用的配置」的集合，而不是「仓库里被跟踪的配置」。
+        # L35 的根因就是这里：local/ 下四份真机运行配置没有被扫，
+        # 于是组改名漏改 dns.servers[].detour 时，所有门禁全绿、真机才炸。
+        # local/ 在 .gitignore 里、允许放真实节点，故只跳过它不适用的两项：
+        #   ① 防泄漏扫查（audit_redaction 自己按 startswith("local/") 跳过）
+        #   ② 占位域名检查（audit_repo_rules 自己按 rel.parts[0]=="profiles" 隔离）
+        # 引用完整性、平台能力、组一致性、DNS 广告层顺序等**一律照查**。
         targets = sorted(PROFILES.rglob("*.json")) + [ROOT / "templates" / "groups.json"]
+        if LOCAL.is_dir():
+            targets += sorted(LOCAL.glob("*.json"))
 
     if not targets:
         print("没有找到任何配置文件", file=sys.stderr)
@@ -2293,6 +2778,8 @@ def main():
         (tpl_rep, {"template-text"}),
         (plat_rep, {"platform-matrix"}),
         (cov_rep, {"template-coverage"}),
+        (probe_rep, {"matrix-paths"}),
+        (doc_rep, {"doc-group-names"}),
     ]
     if args.json:
         all_results = ledger_results + results
@@ -2305,7 +2792,9 @@ def main():
                         "version": version,
                         "status": "PASS" if r.ok() else "FAIL",
                         "items": [
-                            {"level": lv, "code": c, "message": m} for lv, c, m in r.items
+                            {"level": lv, "code": c, "message": m,
+                             **({"where": w} if w else {})}
+                            for lv, c, m, w in r.items
                         ],
                     }
                     for r, p in all_results
@@ -2323,9 +2812,9 @@ def main():
         for r, p in results:
             status = "PASS" if r.ok() else "FAIL"
             print(f"\n=== {r.name}  [{status}]  目标版本 {version}  平台 {'/'.join(sorted(p))}")
-            for lv, c, m in r.items:
+            for lv, c, m, w in r.items:
                 mark = {"ERROR": "[E]", "WARN": "[W]", "INFO": "[i]"}[lv]
-                print(f"  {mark} {m}")
+                print(f"  {mark} {m}" + (f"   ← {w}" if w else ""))
             if r.ok() and not r.warns:
                 print("  · 无问题")
         all_results = ledger_results + results

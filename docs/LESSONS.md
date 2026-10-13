@@ -1551,6 +1551,268 @@ commit message 与本地一致」，但需要网络与远端访问，不适合�
 
 ---
 
+## L36 组改名 98% 的成本在散文里，而散文一处门禁都没有
+
+**现象**
+
+执行「组 tag 加 emoji 前缀」（`Proxy` → `🚀 Proxy`）时：
+
+- 配置侧要改的**只有 24 处**（三份 profile 各 8 处 + 模板 + `nodes.example.json`），
+  且每一处都有门禁盯着（`profile_drift` / `dangling_ref` / `template_profile_group_missing`）。
+- 散文侧要改的是 **240 处、19 个文件**（`docs/LESSONS.md` 39、`tools/audit.py` 54、
+  `docs/WORKFLOW.md` 32、`AGENTS.md` 39…），**一处门禁都没有**。
+- 实际耗时几乎全在散文：我手写了两版替换脚本（`_retag.py` / `_retag2.py`，13 条上下文正则），
+  仍然漏掉 `templates/groups.json:46` 的裸 `Proxy`（搭配是「与 Proxy 各自独立测速」，
+  不在任何模式里），只能靠人肉 grep 一轮一轮找漏。
+
+**根因**
+
+配置里的组 tag 是**有类型的引用**（JSON 字符串，位置可枚举，门禁可逐格对账）；
+散文里的组 tag 是**无类型的词**——同一个 `Proxy` 可能是：
+
+1. 组名引用（`jinx-ads → AD`、`` `AD` ``、`selector[AD]`）——**必须改**，
+   因为下一个读它的人会照抄进配置，留旧名就等于埋悬空引用（这正是 L35 的成因）；
+2. 历史叙述（「用户原话：给 Proxy 改为🚀 Proxy」「早期 AI 实现成 selector(outbounds=[Proxy])」）
+   ——**绝不能改**，改了就是篡改记载；
+3. 完全无关的词（`NaiveProxy`、`OpenAI`、「给 AI 读的入口」）——**改了就错**。
+
+在门禁出现之前，区分这三类**只靠人的判断力**。而判断力不可累积、不可回归、不可交接——
+每换一轮上下文就得重新判断 240 次。这就是「组改名很慢」的全部原因。
+
+**为什么没被拦住**
+
+`tools/audit.py:13` 的文件头注释写着「设计依据：docs/version-matrix.json（字段生命周期）、
+`docs/PLATFORM-MATRIX.md`（平台能力）」，但 `PLATFORM-MATRIX.md` 当时零门禁（L32 已修）。
+散文组名更是从头到尾没有任何检查——`grep -n 'group_name' tools/audit.py` 在本次改动前为空。
+
+更根本的原因：**门禁体系只覆盖「有 schema 的东西」**（JSON 字段、台账条目形态），
+而「文档里的名词是否过期」不属于任何 schema，所以从来没人想过要检查它。
+
+**修法**
+
+新增 `audit_doc_group_names()`，把上述三类区分写成代码：
+
+- 文件范围 = `_tracked_files()`（含未 add 的新文件，L29）去掉 `docs/upstream-*`、`archive/`、
+  `docs/evidence/`、`docs/schema.json`。
+- **历史台账豁免**：`docs/LESSONS.md` 与 `docs/DECISIONS.md` 是**追加型历史记录**，
+  它们必须能写下旧名（改名决策本身就得写出「由 `Proxy` / `AI` / `AD` 改成…」）。
+  门禁只管**活文档**——下一个人会照着写新配置的那些。
+- 规范名自带 emoji 前缀，故向前看 **2 个字符**（emoji + 一个 ASCII 空格）才算命中规范名；
+  只看 1 个字符会漏掉那个空格，把 `🚀 Proxy` 里的 `Proxy` 误判成旧名（第一版就是这么错的）。
+- 只报**配置引用位**（`→ X` / `outbound X` / `selector[X]` / `` `X` ``）；
+  散文短称（「🚫 AD 组」「🚫 AD 里的 direct」）不报——强行全写成长名只会变噪音。
+- 豁免：`EXEMPT` 关键词（旧名/原话/改名/仍指向/早期…）、专有名词（`NaiveProxy`/`OpenAI`）、
+  「AI = 人工智能/助手」的搭配词，以及门禁自己的**反向检测字面量**
+  （`{"Proxy", "AI", "AD"}`——改成规范名就变成永远不响的死检查，同 L34 的教训）。
+
+**门禁**：`doc_group_name_stale`, `doc_group_name_clean`
+
+**涉及**：`tools/audit.py`, `AGENTS.md` 铁律 20, `templates/groups.json`
+
+
+---
+
+## L37 门禁从来没有被反向验证过 —— 负向样本一次性用完即删
+
+**现象**
+
+组改名那一轮，验证新门禁靠的是**临时现写脚本**（`local/_negtest.py`、`local/_neg1.sh`……），
+跑完就删。下一轮要验证别的门禁时，从零再写一遍。
+
+代价有三层：
+
+- **慢**：每轮重新造样本、重新调 CLI、重新解析输出；
+- **没回归网**：改门禁时把一个能响的检查改成不响的，`audit.py` 自己照旧全绿；
+- **死检查无人知**：L34 那个 `android_resolver` 按早就不再使用的字面量匹配，
+  **永远不会响**，但从代码到 CI 没有任何一环会发现 —— 因为「不响」和「没事」看起来一样。
+
+**根因**
+
+门禁的**验证方式**从来没被产品化。每道门禁只在写它的那一次被人肉确认过，
+之后就再没有任何机制重复验证它。`audit.py` 的设计原则是「干净时安静」——
+这恰好意味着**一个彻底失效的门禁与一个正常工作且无事的门禁，输出完全相同**。
+
+这是 L25（工具自检）、L29（未被跟踪文件）、L30（时区常量）的同一类问题：
+**验证手段本身没有验证**。
+
+**为什么没被拦住**
+
+因为「临时脚本用完即删」在当时看起来是负责的行为 —— 没人希望仓库里堆一次性文件。
+但它把「一次性的验证」当成了「验证完成了」，于是验证成果不可积累、不可回归。
+
+更隐蔽的是：临时代码只需在「刚刚改过的那一种破坏」上正确，它不需要对**下一轮**负责。
+
+**修法**
+
+新增 `tools/negtest.py` —— 把负向样本固化成**常驻回归套件**：
+
+- 24 个用例，每个 = 「取真实 profile 的 dict → 做一处最小破坏 → 期望某 code 报出」；
+- 走**真实的 CLI**（`python tools/audit.py --no-check --json <file>`），不 mock、不 import 审计函数，
+  走的就是 CI 走的那条路；
+- 支持 `-k` 过滤与 `-v` 详情；跑完自动清理 `local/_negtest/`；全程约 1 秒。
+
+三条语义细分（都是跑第一遍就暴露出来的）：
+
+1. **作用范围**：`single` = 临时配置只跑那一份（快）；
+   `repo` = 临时改**真实** `profiles/1.14/android-lazy.json` 跑整仓审计再还原 ——
+   因为 `template_profile_group_missing` / `doc_group_name_stale` 这类门禁**必须与真实文件对账**，
+   临时文件根本触发不了（`_load_profiles()` 读的是真实路径）。用 `try/finally` + 字节比对保证还原。
+2. **期望级别不是常量**：`cache_path_abs` 是 **WARN** 不是 ERROR ——
+   而 harness 的 `_audit_codes()` 默认只收 ERROR，把「能响的 WARN 门禁」误判成死检查。
+   于是级别必须逐个用例声明，不能写死。
+3. **豁免要按「谁需要旧名」判定，不能按文件名硬编码**：`negtest.py` 上线后
+   立刻被 `doc_group_name_stale` 拦下（它的**本职就是写出旧名**）。
+   若当时按文件名硬编码 `tools/negtest.py`，下一个负向脚本又会重踩；
+   改为 `_is_negative_fixture()`（按词根 `neg`/`_neg` 判定），
+   覆盖 `tools/negtest.py` 与 `local/` 下的一次性脚本。
+
+另修一个平台坑：Windows 上 stdout 重定向到管道时默认回退 GBK，本文件到处是 ✅/❌，
+一 `| tee` 就 `UnicodeEncodeError` 崩掉 —— **管道里崩**正是「本地绿、CI 红」的温床。
+故 import 后立即 `reconfigure(encoding="utf-8")`。
+
+接入点：`tools/check-all.sh` 新增 `[3/4] 门禁负向回归`；CI 新增同名 step。
+
+**门禁**：无（本条目约束的是「验证手段」本身，由 `tools/negtest.py` 与
+`tools/check-all.sh` 承载，不产生 `audit.py` 的 code）
+
+**涉及**：`tools/negtest.py`, `tools/check-all.sh`, `.github/workflows/audit.yml`
+
+
+## L38 门禁只说「哪里错」，不说「改哪里」—— 定位成本被转给了人
+
+**现象**
+
+门禁报错长这样：
+
+```
+[E] §4 说 desktop 的 `inbounds[0].strict_route` 是 `true`，实际是 None
+[E] 三份 profile 的 `dns.servers[2].server` 不一致（...），但 §4 表里没有登记这一项
+```
+
+两条都能看懂**错在哪**，但要说清**该改哪一行**，还得自己回文件里搜 ——
+第一处要改的是 `docs/PLATFORM-MATRIX.md` 的 §4 表格某一行，
+第二处要改的是同一张表（**加**一行），而报错文本里没有行号、没有文件名。
+
+**根因**
+
+`Report.error(code, msg)` 的消息是**人写的散文**，而定位信息本来就在代码手里：
+`_sec4_rows()` 解析表格时逐行遍历，行号唾手可得；`audit_matrix_coverage()` 也知道
+出事的是哪一份 profile。但接口只接受「一段文字」，于是定位信息在拼消息时就丢了。
+
+这不是「写得不够详细」，而是**接口缺字段**：只要 `Report` 没有承载位置的地方，
+每道门禁都会各自决定要不要把位置塞进散文里 —— 结果就是只有一部分塞了、格式还各不相同。
+
+**为什么没被拦住**
+
+因为门禁的验收标准一直是「能不能报出来」。定位质量不属于任何一条门禁的判据，
+也不影响退出码，于是它永远排在被砍掉的那一侧。
+
+**修法**
+
+给 `Report` 的三种级别加第三个可选参数 `where`（`文件:行号`，统一 `/`、相对仓库根）：
+
+- 终端输出改成 `[E] <消息>   ← <文件>:<行号>`，`--json` 里多一个 `where` 字段；
+- `_sec4_rows()` 顺带返回每行在原文里的**行号**（§4 起始行 + 段内偏移）；
+- `profile_drift` 指向 §4 表头（要加行的地方），
+  `template_profile_group_missing` / `profile_group_not_in_template` 指向出事的那份 profile；
+
+⇒ 读报错的人不用再搜索：`← docs/PLATFORM-MATRIX.md:179` 直接跳过去。
+
+**门禁**：`matrix_platform_stale`, `profile_drift`, `template_profile_group_missing`,
+`template_profile_group_type`, `profile_group_not_in_template`
+
+**涉及**：`tools/audit.py`（`Report` / `_loc()` / `_matrix_sec4_lineno()` / `_sec4_rows()`）
+
+
+---
+
+## L39 门禁挂在矩阵的 `path` 上，而上游改了路径之后没有任何东西会告诉你
+
+**现象**：`docs/version-matrix.json` 里 `kind=deprecated/removed` 的条目**全部靠 `path` 定位字段**
+（`audit_matrix()` 用 `find_paths(cfg, e["path"])` 去找）。上游一旦把字段改名、搬走或删掉，
+`find_paths` 就永远返回空 —— 条目**静默失声**：门禁还在 `audit.py` 里、`docs/LESSONS.md` 里也列着它，
+`audit.py` 全绿，但那条保护已经不存在了。这与 L34（门禁按已经不再出现的字面量匹配）是同一种病，
+但 L34 是「门禁自己写错」，这一条是「门禁没错、外面的世界变了」。
+
+**根因**：门禁的输入有两个来源 —— 配置（`profiles/`、`local/`）与**知识**（矩阵的版本号、path、replacement）。
+前者一直在扫，后者**只被扫过「有没有被 D 条目收录」**（`audit_decisions`），
+从来没有人验过「矩阵里的 path 在锁定的内核上是否还找得到」。
+单看矩阵看不出问题（它自洽），单看内核也看不出问题（它没坏），
+只有**两个来源交叉比对**才暴露。
+
+**为什么没被拦住**：因为这属于「缺一个探针」而不是「写错一行」。此前的所有门禁都是拿**配置**当输入，
+上游改字段名这件事根本不进入任何检查的视野。另外它**天然不会自曝**：失效的门禁与正常门禁
+在输出上完全一样（都是一行 `[i] sing-box check EXIT=0`）。
+`tools/negtest.py` 也抓不到 —— 它靠「故意改坏配置」，而这条门禁的失效与配置无关。
+
+**修法**：新增 `audit_matrix_paths()` —— **不读任何真实配置**，而是按矩阵的 `path` 反推出一个
+最小探针配置，注入那个字段名，交给 `sing-box check` 判它认不认识：
+- 内核报 `unknown field "<leaf>"` ⇒ 字段已不存在；
+- 内核毫无意见 ⇒ 认识（可能顺带自报 `deprecated in sing-box A and will be removed in B`，与矩阵自称的版本号比对）。
+
+按「矩阵声称该字段此时应当存在/已废弃」筛选后，只有一种情况判 ERROR：
+**内核已经不认它，而矩阵还在要求门禁去查它**。
+
+⚠️ 刻意**不报**的情况：矩阵说「已移除」、内核却仍然照收。这在本项目里是**常态** ——
+sing-box 用 migration 保住旧字段，就是为了让人误用时不至于炸（例如 `inbounds[].sniff`、
+`dns.servers[].address` 在 1.14.3 上仍被接受），正因如此才需要 `kind=deprecated` 门禁去拦。
+第一版实现把它当 ERROR，一跑就是 17 条假报警，已删除。
+
+**同类补强（同一根因的另一面）**：`tools/upgrade-check.py` 的 `TRACKED_DOCS` 原只跟踪四份上游文档
+（`deprecated`/`migration`/`changelog`/`inbound/tun`），而**平台能力清单的唯一权威源**
+（`docs/clients/apple/features.md`、`docs/clients/android/features.md`）没有本地快照 ——
+上游把某个 `:material-close:` 改成 `:material-check:` 时，仓库里硬编码的平台判据
+（`platform_strict_route` 等）会继续把**正确的写法判成 ERROR**，而且没人会知道。已纳入跟踪。
+
+**门禁**：`matrix_path_unreachable`, `matrix_path_unprobeable`, `matrix_path_probe_error`,
+`matrix_path_ok`, `matrix_probe_skipped`, `matrix_version_mismatch`
+
+**涉及**：`tools/audit.py` 的 `_probe_candidates()` / `_probe_verdict()` / `audit_matrix_paths()`
+与 `main()` 的 `probe_rep`；`tools/upgrade-check.py` 的 `TRACKED_DOCS`。
+
+## L40 我在同一次会话里，用同一种方式毁了两份文件
+
+**现象**：一次会话里两次把仓库文件写坏，且**方式完全相同**：
+
+1. `tools/audit.py` 从 **1919 行被截成 828 行** —— 我用 `find(lambda l: l.strip() == 'try:')`
+   定位替换点，命中的是文件里**第一个** `try:`（:514），不是我要改的那个。
+2. `AGENTS.md` 变成 **0 字节** —— 脚本里 `open(p,'wb')` **先把文件清空**，
+   后面才算要写的内容，而中间那句 `raw.replace('字符串', …)` 对 bytes 抛了 `TypeError`，
+   异常把 `finally` 里的还原也一起跳过了。
+3. （同一族）heredoc 里写 `b'\x00'` 被 shell 二次解释成**真 NUL 字节**，
+   写进 `tools/audit.py` 后 `py_compile` 报
+   `SyntaxError: source code string cannot contain null bytes`，整段重写两次。
+
+**根因**：这三件事是**同一个**：我在「**先动文件、后确定内容**」。
+`open(p,'wb')` 是「先动」，按短 token 定位是「还没确定要动哪一处就先动了」，
+heredoc 是「内容先经过了一层我不控制的解释器」。
+共同点：**写入这个动作被拆成了两半，中间插入了可能失败、可能被改写的步骤。**
+
+**为什么没被拦住**：仓库里有 30 多条门禁，全部在检查**结果**（配置对不对、文档对不对），
+没有一条检查**写入方式**。而这类事故的产物是「文件变短/变空」，恰恰不违反任何配置规则 ——
+`git diff --stat` 才看得出来（`AGENTS.md | 323 ----`）。
+另外我自己的一条错判推波助澜：我以为「先把备份 `cp` 到 `/tmp` 就安全」，
+但 `/tmp` 路径在这台机器的 git/python 里**根本读不到**，等于没有备份。
+
+**修法**：
+1. 新增 `tools/patch-text.py` —— 把「改文件」变成一件不会伤到文件的事：
+   - **原子写**：先算好完整内容 → 写同目录 `*.tmp-patch` → `os.fsync` → `os.replace()`；
+     中途任何异常都不碰原文件（`open(p,'wb')` 那条路直接不存在了）。
+   - **唯一锚点**：每条 patch 声明期望匹配次数，实际次数不符就**整体拒绝**、一个字节都不改。
+   - **不经 shell**：find/replace 只从 JSON 读（`--spec-inline` 也走 JSON），
+     不再有 heredoc 二次解释。
+   - 每个 patch 打印 `文件:行号 匹配 N 处`，改了什么、改在哪一行当场可见。
+2. 备份只放**仓库内**路径（`local/` 受 `.gitignore` 保护），不用 `/tmp`。
+3. 铁律 22（`AGENTS.md`）：**改文件不许「先打开、后算内容」**。
+
+**门禁**：无（约束的是「写入方式」而不是配置内容；由 `tools/patch-text.py` 与铁律 22 承载 ——
+`audit_tools()` 会把 `patch-text.py` 一起 `compile()`，语法坏掉时报 `tool_syntax_error`）
+
+**涉及**：`tools/patch-text.py`、`AGENTS.md` 铁律 22、`tools/audit.py` 的 `audit_tools()`
+
+---
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。
@@ -1561,4 +1823,10 @@ commit message 与本地一致」，但需要网络与远端访问，不适合�
 4. 在 `**门禁**：` 行里写上第 1 步的 code（反引号包裹）；这条教训没有对应门禁就写「无」，
    **但必须写这一行**，否则报 `lesson_missing_gate_line`。
 5. `python tools/audit.py` 应当能过 —— `audit_lessons()` 会替你检查两边对得上。
-6. 跑负向测试：把配置改坏，确认新门禁真能报 ERROR。
+6. 跑负向回归：把用例登记进 **`tools/negtest.py`** 的 `CASES`（不要临时现写脚本、跑完就删 ——
+   那是七条改造第 7 条要消除的浪费，也是「门禁可能是死的」没被发现的原因，见 L37）。
+   先确认它 ❌（新门禁还没实现时），实现后再确认 ✅。
+7. `bash tools/check-all.sh` 应当能过 —— 它把「静态门禁 + 负向回归 + 逐份 `sing-box check`」
+   串成一条命令，任一步失败都会在汇总里点名。
+8. 要改**任何**文件时用 `python tools/patch-text.py spec.json`，不要临时写 heredoc/python 重写文件
+   —— 原子写 + 唯一锚点 + 不经 shell，三条各对应一次真实事故（L40）。

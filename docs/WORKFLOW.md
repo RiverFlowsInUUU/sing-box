@@ -76,6 +76,12 @@ docs/DECISIONS.md          决策记录（每条新功能的启用/不启用、�
 
 所以“文档声称有防护、代码里没有”和“新加了门禁没人知道它拦什么”这两类问题都会被拦住。
 
+**但双向绑定只能证明门禁「存在」，证明不了它「会响」** —— 一个按早已不用的字面量匹配的门禁
+（L34）在代码里真实存在、在文档里也有出处，却永远不会报错。
+所以每道门禁还必须有一个**负向用例**：`tools/negtest.py` 故意改坏 25 处，
+每处必须报出对应的 code（见 L37）。加新门禁时**必须**往 `CASES` 里登一个用例，
+不要临时现写脚本、跑完就删。
+
 **为什么 `profiles/` 按大版本分目录**：1.14 的配置在 1.15 上可能直接 `FATAL`（例如 1.17 移除
 `stack` 后就起不来）。按大版本分目录后，升级＝新开一个目录，旧配置原地保留、随时可回退。
 
@@ -112,12 +118,12 @@ docs/DECISIONS.md          决策记录（每条新功能的启用/不启用、�
 需要用户提供：
 
 1. **节点分享链接**（可多个）：`vless://…` `vmess://…` `trojan://…` `hysteria2://…` `ss://…` …
-2. **落点分流组**：`🚀 Proxy`（普通外网）、`🤖 AI`（AI 类网站走更干净的出口）、`🚫 AD`（广告拦截）
+2. **落点分流组**：代理组（普通外网）、智能组（AI 类网站走更干净的出口）、去广告组（广告拦截）
 3. **目标平台**：Android / iOS / Windows
-4. **🤖 AI 组要放哪些节点**（`🤖 AI` 与 `🚀 Proxy` 是两个独立的 urltest 组，各自在组内节点间优选；
-   用户不说就先把所有代理节点都放进去，**不要**用 `🚀 Proxy` 当子节点）
+4. **智能组要放哪些节点**（智能组与代理组是两个独立的 urltest 组，各自在组内节点间优选；
+   用户不说就先把所有代理节点都放进去，**不要**用代理组当子节点）
 
-缺哪个就问，不要自己猜。用户只说"A 放 🤖 AI 组"，那就只动 🤖 AI 组。
+缺哪个就问，不要自己猜。用户只说"A 放智能组"，那就只动智能组。
 
 ### A2. 查版本
 
@@ -146,16 +152,16 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 从 `profiles/<版本>/<平台>-lazy.json` 拿骨架（**不要新写一份配置**），然后：
 
 1. 在 `outbounds[]` 末尾追加节点对象，`tag` 用「节点名-地区-协议」这种可读名，
-   且**不得与既有 tag 重复**（`🚀 Proxy` `🤖 AI` `🚫 AD` `direct` `block` 是保留名；`🚀 Proxy` 是 urltest 组，节点更不能占用）。
+   且**不得与既有 tag 重复**（三个分流组 tag 与 `direct` `block` 都是保留名，逐字规范名见 `AGENTS.md` 铁律 6；代理组是 urltest，节点更不能占用）。
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
-   `🚀 Proxy` 与 `🤖 AI` 都是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
-   两个组的 `outbounds` 里**只放真实节点，不要放 `🚀 Proxy` / `🤖 AI` 这类组 tag**（不嵌套）。
+   代理组与智能组都是 urltest，加进去即自动测速——**不再有单独的 Auto 组**；
+   两个组的 `outbounds` 里**只放真实节点，不要放代理组 / 智能组这类组 tag**（不嵌套）。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非用户另外要求。
    其中规则集与规则顺序是**固定骨架**（见 `AGENTS.md` 的「固定规则集清单」）：
    `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，少一个、换个位置都不行。
    **若启用了 DNS 层前置拦截**（见 `docs/DECISIONS.md` D13），`dns.rules` 里还有第二套顺序
    （白名单 → 拦截 → `geosite-cn`）需要同步维护 —— 两张表各写各的，排错即静默失效（L28）。
-4. `🚫 AD` 分组**只允许** `block`（m07194 起删掉 `direct`），永远不要把代理节点放进去。
+4. 去广告组**只允许** `block`（m07194 起删掉 `direct`），永远不要把代理节点放进去。
 5. **组 tag 逐字用规范名**：`🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + 一个 ASCII 空格 + 名字）。
    写错一个字符 = `route.final` / 规则引用全部落空（`check` 不会报）。详见 `AGENTS.md` 铁律 20。
    理由：`direct` 这一档在去广告组里没有任何使用场景（想直连的域名就该在规则里走 `direct`），
@@ -164,6 +170,11 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 ### A5. 跑门禁
 
 ```bash
+# 推荐：一条命令串完三层（静态门禁 + 负向回归 + 逐份 sing-box check）
+bash tools/check-all.sh
+bash tools/check-all.sh --run      # 再加启动级验证（约 1 分钟）
+
+# 只想跑单份时：
 python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
 # 交付前至少再真启动一次（check 只反序列化，验不了能不能起来）
 python tools/audit.py --run --run-seconds 20 profiles/1.14/ios-lazy.json --platform ios
@@ -207,6 +218,15 @@ python tools/upgrade-check.py
 ```
 
 报告包含：最新正式版号、文档快照差异、矩阵对账、升级风险、受影响配置。
+
+> 🎯 **B1 之后第一件事是确认「门禁还好不好使」**：`audit_matrix_paths()` 会把矩阵里每条 `path`
+> 注入一个最小探针交给内核认（见 L39）。它报 `matrix_path_unreachable` 就说明上游改过字段名或路径，
+> 那条门禁**已经悄悄失效**——此时先更新矩阵的 `path`/`replacement`，再谈其他升级动作。
+
+> 上游文档快照的**平台能力两页**（`docs/clients/{apple,android}/features.md`）已纳入跟踪：
+> 它是 `docs/PLATFORM-MATRIX.md` §1/§1a/§2/§2a 的唯一权威源，上游把某个
+> `:material-close:` 改成 `:material-check:` 时，仓库里硬编码的平台判据会把**正确写法判成 ERROR**。
+> 文档快照取上游 **`testing` 分支**，可能比 `singbox_version.txt` 锁定的正式版更新（属提前预警）。
 
 ### B2. 判断跨度
 
@@ -309,7 +329,7 @@ python tools/audit.py --version 1.15.0 profiles/1.15/*.json
 
 ```bash
 python tools/gen-docs.py          # 重新生成人读版矩阵
-python tools/audit.py             # 全仓库配置体检
+bash tools/check-all.sh --run     # 静态门禁 + 负向回归 + 启动级 + 逐份 check
 # 全部 0 ERROR 后：
 echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
 python tools/upgrade-check.py --write    # 更新上游文档快照
@@ -450,7 +470,7 @@ else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 2. 每条 `removed_in` 必须能在 `docs/upstream-deprecated.md` 里找到原文。
 3. 不确定"什么时候移除"的，`removed_in` 留空或写 `null`，别猜。
 4. 每条都要有 `doc` 链接。
-5. 改完必须 `python tools/audit.py` 全绿才算完。
+5. 改完必须 `bash tools/check-all.sh` 全绿才算完（含负向回归）。
 
 ## 六、常见误区
 
@@ -465,5 +485,5 @@ else if networkManager.AutoDetectInterface() && !disableDefaultBind {
 | "广告用 `category-ads-all` 就够了" | 本仓库用 Jinx (`jinx-ads`) + 秋风 (`awanue-ads`)，且**必须**配 `jinx-direct` 放行集，顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |
 | "规则顺序无所谓" | 顺序错了等于没加。`geosite-cn` 排在拦截之前，国内广告域名会先命中直连，广告规则再无机会执行 |
 | "`cache_file.path` 可以写 `../cache/cache.db`" | sing-box **不会**自动建父目录，父目录不存在直接 `FATAL` 起不来。写 `cache.db` |
-| "分流组越多越好" | 本仓库只要 `🚀 Proxy` / `🤖 AI` / `🚫 AD` 三个 + `direct` / `block` |
-| "让 🤖 AI 组指向 🚀 Proxy 省事" | 两个 urltest 串联后测速会互相拖累，且 🤖 AI 组失去独立优选意义；组的 `outbounds` 只放真实节点 |
+| "分流组越多越好" | 本仓库只要代理组 / 智能组 / 去广告组三个 + `direct` / `block` |
+| "让智能组指向代理组省事" | 两个 urltest 串联后测速会互相拖累，且智能组失去独立优选意义；组的 `outbounds` 只放真实节点 |

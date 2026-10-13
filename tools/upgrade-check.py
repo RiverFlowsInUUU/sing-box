@@ -47,6 +47,12 @@ TRACKED_DOCS = {
     "docs/migration.md": DOCS / "upstream-migration.md",
     "docs/changelog.md": DOCS / "upstream-changelog.md",
     "docs/configuration/inbound/tun.md": DOCS / "upstream-tun.md",
+    # 平台能力的唯一权威源（docs/PLATFORM-MATRIX.md §1/§1a/§2/§2a 全部抄自它）。
+    # 不纳入快照，上游把某个 :material-close: 改成 :material-check: 时，
+    # 仓库里硬编码的平台判据（platform_strict_route 等）会继续把正确的写法判成 ERROR，
+    # 而没有任何机制会告诉你 —— 那是「门禁与内核脱节」最典型的一种。
+    "docs/clients/apple/features.md": DOCS / "upstream-apple-features.md",
+    "docs/clients/android/features.md": DOCS / "upstream-android-features.md",
 }
 
 

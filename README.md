@@ -16,9 +16,9 @@
 2. 把里面**所有占位节点**（`node-0X.example.com` 那几条）删掉。
 3. 按 `docs/PROTOCOL-MAPPING.md` 把你的分享链接翻译成节点对象，追加进 `outbounds`。
 4. 把新节点的 `tag` 加进对应分流组的 `outbounds` 数组：
-   - `🚀 Proxy` — 普通外网（**本身就是 urltest 自动测速组，加进去即完成**）
-   - `🤖 AI` — AI 类站点（**同样是 urltest**，放你希望 AI 走的那几个节点）
-   - `🚫 AD` — 广告拦截（**出口只有 `block`**，即「命中就拦」，没有放行档）
+   - 代理组（`🚀 Proxy`）— 普通外网（**本身就是 urltest 自动测速组，加进去即完成**）
+   - 智能组（`🤖 AI`）— AI 类站点（**同样是 urltest**，放你希望 AI 走的那几个节点）
+   - 去广告组（`🚫 AD`）— 广告拦截（**出口只有 `block`**，即「命中就拦」，没有放行档）
 5. 导入客户端。
 
 更省事的做法：把仓库链接 + 分享链接 + 目标平台直接丢给 AI，让它按 `AGENTS.md` 生成。
@@ -49,7 +49,11 @@ templates/                    片段骨架
 nodes/nodes.example.json      节点书写示例
 tools/
   audit.py                    门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
-                              平台矩阵对账 / 模板覆盖对账
+                              平台矩阵对账 / 模板覆盖对账 / 散文旧组名扫查 /
+                              矩阵 path ⟺ 内核交叉对账（matrix_path_unreachable）
+  negtest.py                  门禁负向回归（故意改坏 25 处，确认门禁真的会响）
+  check-all.sh                一条命令跑完：静态门禁 + 负向回归 + 启动级 + 逐份 sing-box check
+  patch-text.py               安全改写文件：原子写 + 唯一锚点 + 不经 shell（铁律 22）
   diff_config.py              两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
   upgrade-check.py            上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
   gen-docs.py                 由 JSON 生成 VERSION-MATRIX.md（勿手改后者）
@@ -108,14 +112,14 @@ python tools/upgrade-check.py
 3. 已移除字段 = 致命
 4. **`check` 通过 ≠ 能启动**——`check` 只反序列化、不初始化。交付前必须 `audit.py --run` 真启动一次
 5. 平台能力不同，iOS/Android **没有** `strict_route`
-6. 分流组只有 `🚀 Proxy` / `🤖 AI` / `🚫 AD` + `direct` / `block`；`🚀 Proxy` 与 `🤖 AI` 都是 urltest，组内只放真实节点、不嵌套组
+6. 分流组只有代理组 / 智能组 / 去广告组三个（tag 见 `AGENTS.md` 铁律 6）+ `direct` / `block`；代理组与智能组都是 urltest，组内只放真实节点、不嵌套组
 7. **任何时候、任何文件都不放真实节点**——范围是**整个被跟踪仓库**（不只是 `profiles/`，`docs/` 的散文同样公开）；含真实节点的配置只存仓库外的 `local/`（已在 `.gitignore`），永不提交、永不推送。`audit.py` 有 `placeholder_server` + `sensitive_ip_in_repo` 兜底
 8. 规则集走 jsdelivr CDN，不用 `raw.githubusercontent.com`
 9. 广告规则集用 Jinx；顺序 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`。可选加固：`dns.rules` 里同样插入白名单 → 拦截（`predefined` NXDOMAIN）两条，**且必须排在 `geosite-cn` 之前**；`dns.rules` 与 `route.rules` 是两份独立的顺序表，改一处必须改另一处（L28）
 10. 旧版本配置只归档不删除
 11. **不在本机乱试**——本机有 OpenClash 网关会劫持 DNS，本机连通性结论一律作废；只读配置 / 官方文档 / 源码
 12. **tun + auto_route 必须写 `route.auto_detect_interface: true`**——不写就是“能启动但没网”
-13. 日志里的 `using outbound/selector[🚫 AD]: operation not permitted` 是**拦截成功的正常日志**，不要去“修” 🚫 AD 组；🚫 AD 的 `default` 必须始终是 `block`
+13. 日志里的 `using outbound/selector[🚫 AD]: operation not permitted` 是**拦截成功的正常日志**，不要去“修”去广告组；去广告组的 `default` 必须始终是 `block`
 14. **「只走 IPv4」必须端到端**——`dns.strategy` 只管本地 DNS；`route.rules` 里必须有 `{"action": "resolve", "strategy": "ipv4_only"}`，**且位置必须在 `hijack-dns` 之后、第一个 route/reject/bypass 之前**（放末尾等于没放，因为一命中就 break match），否则目标域名会被原样交给代理服务端解析
 15. **出口 IP 的地址族不由客户端决定**——`resolve` 只管到「本地→服务端」这一段；「服务端→目标站」由服务端决定。看到 IPv6 出口先去确认它是不是节点自身的 AAAA 记录，别在本地配置里继续加固
 16. **上游新增能力必须显式写下「启用 / 不启用 / 必须跟随」**——不写就是隐式选了“不启用”（往往因为没注意到）。矩阵建 `kind="new"` 条目 + `docs/DECISIONS.md` 记理由与备选方案
