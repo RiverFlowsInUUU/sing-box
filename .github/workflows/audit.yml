@@ -41,8 +41,21 @@ jobs:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
 
-      - name: 门禁负向回归（故意改坏 28 处，确认门禁真的会响）
+      - name: 门禁负向回归（故意改坏，确认门禁真的会响）
         run: python tools/negtest.py
+      - name: markdown 结构校验（围栏 / 标题层级 / 链接 / 锚点）
+        run: |
+          # 本仓没有 markdownlint 配置 → 用 tools/mdlint.py 兜底。
+          # 只查**确定性**错误（围栏不配对、标题层级跳跃、相对链接/锚点失效），
+          # 不做风格审查：把风格偏好做成 ERROR 会让流水线长期红着，
+          # 而「红灯一直亮」的后果是人不再看它（这一条写进了 mdlint.py 的注释）。
+          python tools/mdlint.py
+
+      - name: 更新负向回归用例数的说明
+        run: |
+          # 步骤名里的「28 处」是历史遗留，实际用例数已增至 32 —— 以 negtest 自身输出为准。
+          python tools/negtest.py | tail -n 3
+
 
       - name: 校验配置 JSON 可被内核解码（check）
         run: |
