@@ -50,6 +50,13 @@ jobs:
           # 但**绕过才会留下的产物指纹**能验，且是确定性的。
           python tools/check-edit-method.py
 
+      - name: 文档规则重复检测（单一来源原则）
+        run: |
+          # 本仓反复出现「同一条规则被两处各自完整陈述」——
+          # 模块 2 规则清单、三栏分类表、完整克隆流程，都曾一字不差各写一遍。
+          # 危害不是啰嗦，而是改一处忘一处、两份开始打架、没人知道哪份对（L46 成因）。
+          python tools/audit_rules_dupe.py
+
       - name: markdown 结构校验（围栏 / 标题层级 / 链接 / 锚点）
         run: |
           # 本仓没有 markdownlint 配置 → 用 tools/mdlint.py 兜底。

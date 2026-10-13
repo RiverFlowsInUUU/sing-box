@@ -2348,7 +2348,9 @@ def audit_lessons(rep: Report):
             docs_text += p.read_text(encoding="utf-8")
         except Exception:
             pass
-    for p in (ROOT / "AGENTS.md", ROOT / "README.md"):
+    # 出处检查覆盖「AI 入口 + 指路牌 + 主维护手册 + 全部 docs」——
+    # README 已改名为 AI-ENTRY（整仓面向 LLM，不再有「人类入口」）。
+    for p in (ROOT / "AI-ENTRY.md", ROOT / "AGENTS.md", ROOT / "MAINTAINERS.md"):
         if p.exists():
             try:
                 docs_text += p.read_text(encoding="utf-8")
@@ -2358,7 +2360,7 @@ def audit_lessons(rep: Report):
         if code not in docs_text:
             rep.error(
                 "gate_without_lesson",
-                f"tools/audit.py 的门禁 `{code}` 在 docs/*.md、AGENTS.md、README.md 里都没有出处——"
+                f"tools/audit.py 的门禁 `{code}` 在 docs/*.md、AGENTS.md、MAINTAINERS.md、AI-ENTRY.md 里都没有出处——"
                 f"请在 docs/LESSONS.md 补一条教训条目说明它拦的是什么事故",
             )
 
@@ -2805,6 +2807,24 @@ def audit_tools(rep: Report):
                 )
     except (OSError, subprocess.SubprocessError, ValueError) as ex:
         rep.warn("edit_method_fingerprint", f"指纹检测未能执行：{ex!r}")
+
+    # 文档间「规则重复」检测（单一来源原则）——见 tools/audit_rules_dupe.py 的说明。
+    try:
+        dp = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "audit_rules_dupe.py"), "--json"],
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60,
+        )
+        if dp.stdout.strip():
+            for it in json.loads(dp.stdout).get("duplicates", []):
+                rep.error(
+                    "rules_dupe",
+                    f"规则「{it['prefix']}…」同时出现在 {len(it['files'])} 份文件："
+                    f"{it['files']} —— 同一件事只应在一处完整陈述，其余位置留指针"
+                    "（见 AI-ENTRY.md 的单一来源原则）",
+                )
+    except (OSError, subprocess.SubprocessError, ValueError) as ex:
+        rep.warn("rules_dupe", f"文档规则重复检测未能执行：{ex!r}")
 
     # ⚠️ **反向对账**：`negtest.py` 里每个 `m_*` 破坏函数都必须登记进 `CASES`。
     #    没有这一步，「写了破坏函数但忘了登记」是**完全的静默** ——
