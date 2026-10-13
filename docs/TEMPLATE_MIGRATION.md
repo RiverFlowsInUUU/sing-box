@@ -21,7 +21,8 @@
 > 但本仓实际是按**内核大版本**分目录、按**平台**分文件：
 > `profiles/1.14/desktop-lazy.json`、`profiles/1.14/android-lazy.json`、`profiles/1.14/ios-lazy.json`。
 > 本文与 [`CLIENTS_IOS_ANDROID_WINDOWS.md`](CLIENTS_IOS_ANDROID_WINDOWS.md) 均按**实际结构**描述。
-> 是否新建 `templates/<平台>/` 待确认（见 `AI_SYNC_WORKFLOW.md` §十四）。
+> `templates/{ios,android,windows}/` 已建立，作为三端**索引入口**（不含可运行配置），
+> 见 [`../templates/README.md`](../templates/README.md)。
 
 ---
 

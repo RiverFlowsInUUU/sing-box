@@ -235,7 +235,7 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 - **去广告组只放 `block`，永远不把代理节点放进去。**
 - tag 一旦被规则集/规则引用就不能随便改名：`🚀 Proxy` `🤖 AI` `🚫 AD` `direct` `block` 是保留名。
 - `route.final` 固定指向 `🚀 Proxy`，即全局兜底走 urltest 优选。
-- `route.auto_detect_interface` **必须是 `true`**，否则流量回灌 tun（见 `WORKFLOW.md` 的铁律一节）。
+- `route.auto_detect_interface` **必须是 `true`**，否则流量回灌 tun（见 `EXPERIENCES.md` 的「三层问题模型」）。
 
 ## 4. 常见解码坑
 

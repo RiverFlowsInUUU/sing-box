@@ -70,7 +70,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 ```
 
 > ⚠️ 改**流程本身**时四个文件必须同步（L22）：
-> `AGENTS.md` / `README.md` / `docs/WORKFLOW.md` / `docs/DECISIONS.md`。
+> `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/DECISIONS.md`。
 
 ---
 
@@ -103,7 +103,7 @@ python tools/gen-docs.py                # 由 version-matrix.json 重新生成 V
 - `profiles/1.14/*-lazy.json`
 - `templates/groups.json`
 - `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）
-- `AGENTS.md` / `README.md` / `docs/WORKFLOW.md` / `docs/PROTOCOL-MAPPING.md` /
+- `AGENTS.md` / `README.md` / `MAINTAINERS.md` / `docs/PROTOCOL-MAPPING.md` /
   `nodes/nodes.example.json`
 - 仓库外 `local/` 下的运行配置
 
@@ -173,9 +173,13 @@ MAINTAINERS.md                ← 本文件（改规则）
 README.md                     ← 人类入口
 singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
 docs/
+  AI_SYNC_WORKFLOW.md         ← 总工作流（5 模块 / 触发 / 指令模板 / 异常处理）
+  SINGBOX_UPGRADE.md          ← 模块 2：上游升级与新功能请示
+  TEMPLATE_MIGRATION.md       ← 模块 3：模板语法迁移
+  CLIENTS_IOS_ANDROID_WINDOWS.md ← 模块 4：三端差异与交付
+  EXPERIENCES.md              ← 模块 5 + 排障 + 常见误区 + 经验总结
   LESSONS.md                  ← 事故台账【查时读，不是开工必读】现象/根因/为什么没拦住/修法/门禁
   DECISIONS.md                ← 决策记录【查时读】新功能为何启用或不启用、备选方案、前提风险
-  WORKFLOW.md                 ← 完整工作流（升级 / 生成 / 校验 / 排障）
   PROTOCOL-MAPPING.md         ← 分享链接 → outbound 字段映射（手工拼节点时才需要）
   VERSION-MATRIX.md           ← 废弃/移除字段总表（由 version-matrix.json 生成，勿手改）
   version-matrix.json         ← 同上，机器可读（audit.py 的依据）

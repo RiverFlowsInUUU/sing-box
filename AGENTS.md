@@ -70,7 +70,7 @@
 | [`docs/CLIENTS_IOS_ANDROID_WINDOWS.md`](docs/CLIENTS_IOS_ANDROID_WINDOWS.md) | 模块 4 详版：三端差异、模板位置、交付格式 |
 | [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 模块 5：经验总结（区分官方确认 / 经验推测 / 本仓约定） |
 | [`MAINTAINERS.md`](MAINTAINERS.md) | **改规则**的操作手册：升级流程、加门禁、改矩阵、改组 tag |
-| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | 既有工作流细节（排障、常见误区、目录职责） |
+| [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 排障（按报错分流）、三层问题模型、常见误区、经验总结 |
 | [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
 | [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
 | [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃/移除总表（自动生成，勿手改） |
@@ -149,11 +149,10 @@ git branch -a                           # 能读出所有相关分支
 
 ## 9. 待确认信息
 
-以下为任务描述中的占位信息，仓库中**未找到对应内容**，按约定标注，**未替你编造**：
-
-- `{{TODO: 待确认}}` — 上游项目 URL/名称
-- `{{TODO: 待确认}}` — 模板目录（本仓实际为 `profiles/<大版本>/<平台>-lazy.json`）
-- `{{TODO: 待确认}}` — 当前同步版本记录文件路径（本仓已有 `singbox_version.txt`）
-- `{{TODO: 待确认}}` — 「仓库不保存可运行配置」与本仓现状不符
+| 项 | 状态 |
+|---|---|
+| 上游项目 | ✅ sing-box 官方 — `https://github.com/SagerNet/sing-box` · `https://sing-box.sagernet.org/` |
+| 模板目录 | ✅ 可运行模板在 `profiles/<大版本>/<平台>-lazy.json`；[`templates/{ios,android,windows}/`](templates/) 为索引入口 |
+| 版本记录文件 | ✅ `singbox_version.txt` |
 
 完整清单 → [`docs/AI_SYNC_WORKFLOW.md`](docs/AI_SYNC_WORKFLOW.md#十四待补充信息清单) §十四。

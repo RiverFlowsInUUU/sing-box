@@ -50,7 +50,6 @@ python tools/mknode.py 'vless://...' --platform ios --group proxy
 | [`docs/TEMPLATE_MIGRATION.md`](docs/TEMPLATE_MIGRATION.md) | 模板 / 闸门文件语法迁移规则 |
 | [`docs/CLIENTS_IOS_ANDROID_WINDOWS.md`](docs/CLIENTS_IOS_ANDROID_WINDOWS.md) | 三端差异与交付格式 |
 | [`docs/EXPERIENCES.md`](docs/EXPERIENCES.md) | 经验总结（区分官方确认 / 经验推测） |
-| [`docs/WORKFLOW.md`](docs/WORKFLOW.md) | 既有工作流细节：排障、常见误区、目录职责 |
 | [`docs/PROTOCOL-MAPPING.md`](docs/PROTOCOL-MAPPING.md) | 分享链接 → outbound 字段映射 |
 | [`docs/PLATFORM-MATRIX.md`](docs/PLATFORM-MATRIX.md) | 三端能力差异表 |
 | [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md) | 字段废弃 / 移除总表（自动生成） |
@@ -67,7 +66,6 @@ singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
   LESSONS.md                  【查时读】事故台账：现象→根因→修法→对应门禁（118KB，别整读）
   DECISIONS.md                【查时读】决策记录：新功能为何启用/不启用、备选方案、前提风险
-  WORKFLOW.md                 完整工作流（怎么用 + 怎么维护）
   PROTOCOL-MAPPING.md         【核心】分享链接 → outbound 字段映射
   PLATFORM-MATRIX.md          Android / iOS / Windows 能力差异
   VERSION-MATRIX.md           废弃/移除字段总表（人读版，自动生成）
@@ -76,7 +74,9 @@ docs/
   upstream-*.md               官方 deprecated / migration / changelog / tun 快照
   evidence/                   事故证据存档（脱敏后入库；铁律 11 的 debug 日志证据）
 profiles/1.14/                可运行配置（占位节点）
-templates/                    片段骨架
+templates/                    片段骨架 + 三端索引入口
+  groups.json                 三个固定分流组的结构
+  ios/ android/ windows/      三端索引入口（各含 README，不含可运行配置）
 nodes/nodes.example.json      节点书写示例
 tools/
   mknode.py                   ★ 司机入口：链接 → 配置 → 门禁 → local/<platform>.json（约 1 秒）
@@ -189,7 +189,8 @@ python tools/upgrade-check.py
 
 ## 版本
 
-现行锁定版本见 `singbox_version.txt`。上游发布新正式版时的处理流程见 `docs/WORKFLOW.md` 流程 B。
+现行锁定版本见 `singbox_version.txt`。上游发布新正式版时的处理流程见
+[`docs/SINGBOX_UPGRADE.md`](docs/SINGBOX_UPGRADE.md) 与 [`MAINTAINERS.md`](MAINTAINERS.md)。
 
 ## 声明
 

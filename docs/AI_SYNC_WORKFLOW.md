@@ -4,10 +4,64 @@
 > sing-box 配置同步流程。Agent（本仓库的执行方）默认**只读 + 可提醒 + 可生成草稿**；任何写仓库的动作都要我点头。
 
 > ⚠️ **唯一权威来源**：关于 sing-box 的功能、语法、平台支持、版本变更，唯一权威来源是
-> sing-box 上游官方仓库的文档、release notes、changelog。
+> sing-box 上游官方仓库的文档、release notes、changelog ——
+> **上游项目：sing-box 官方仓库 `https://github.com/SagerNet/sing-box`，
+> 官方文档 `https://sing-box.sagernet.org/`。**
 > **本仓库的文档/模板/经验总结只用于工作流定义与经验参考，不具备权威性。**
 > 不得依据本仓库旧模板反推上游行为，不得编造上游功能、版本号、配置项、语法或平台支持。
 > 找不到官方依据时，标注「未能确认」或「待人工判断」，不要猜。
+
+---
+
+## 零bis. 这套仓库要解决什么问题
+
+sing-box 迭代快，字段会**改名、合并、废弃、移除**，而且：
+
+- 未知字段 → `FATAL ... json: unknown field` → 配置起不来
+- 已移除字段 → `FATAL ... deprecated in X and removed in Y` → 配置起不来
+- **已废弃但未移除** → 很多字段 `sing-box check` **完全静默**（典型：`download_detour`）
+- **平台差异** → `check` 完全不校验（iOS 写 `strict_route` 照样 exit=0，但没效果）
+
+所以**只靠「让 Agent 背文档」必然出错**。本仓库把这些知识**固化成可执行的检查**：
+
+| 风险 | 兜底手段 |
+|---|---|
+| 未知字段 / 已移除字段 | `sing-box check`（内核自己报） |
+| 已废弃未移除字段 | `docs/version-matrix.json` + `tools/audit.py` |
+| 平台能力差异 | `docs/PLATFORM-MATRIX.md` + `tools/audit.py` |
+| 引用完整性（出站/规则集/DNS server 不存在） | `tools/audit.py`（`check` **不校验**！） |
+| 规则集**顺序**（放行/拦截/分流先后错了等于没加） | `tools/audit.py` 的 Jinx 顺序检查 |
+| **tun 出口回灌**（能启动但没网，`check` 全静默） | `tun_without_auto_detect_interface` 门禁 |
+| **新增能力没决策**（多了什么而不是少了什么） | `tools/upgrade-check.py` 第 5 节 + 矩阵 `kind="new"` + `DECISIONS.md` |
+| **真实节点地址泄到公开仓库**（`docs/` 散文也会公开） | `sensitive_ip_in_repo`（扫被跟踪文件 + commit message） |
+| **门禁自己坏了 / 静默跳过**（工具语法错也能全绿） | `tool_syntax_error` + `tool_selftest_failed` |
+| **模板里的文字过期**（`_rules_of_thumb` 无人消费，最易写反） | `template_thumb_stale` |
+| 上游又改了 | `tools/upgrade-check.py` |
+
+**目录职责**
+
+```
+singbox_version.txt        当前锁定的正式版（唯一真相）
+AGENTS.md                  指路牌 + 硬规则入口
+README.md                  人类入口
+MAINTAINERS.md             改规则的操作手册
+docs/AI_SYNC_WORKFLOW.md   本文件：总工作流
+docs/PROTOCOL-MAPPING.md   分享链接 → outbound 字段映射（核心知识）
+docs/PLATFORM-MATRIX.md    三平台能力差异
+docs/version-matrix.json   机器可读字段生命周期（audit.py 的依据）
+docs/VERSION-MATRIX.md     上表的人读版（由 tools/gen-docs.py 生成，勿手改）
+docs/schema.json           sing-box 官方 schema（字段白名单）
+docs/upstream-*.md         上游文档快照（取上游 testing 分支，可能比锁定版本新）
+docs/evidence/             事故证据存档（脱敏后入库）
+profiles/<大版本>/          可运行配置（**占位节点**），按平台分文件
+templates/                 片段骨架（分流组）+ 三端索引入口
+  groups.json              三个固定分流组的结构
+  ios/ android/ windows/   三端索引入口（每个目录一份 README，**不含可运行配置**）
+nodes/nodes.example.json   节点书写示例
+tools/                     门禁与工具（各工具 --help 自带说明）
+local/                     【不提交】真实节点配置与私有状态
+archive/<大版本>/          旧版本配置归档（只归档不删除）
+```
 
 ---
 
@@ -388,16 +442,13 @@ git branch -a                              # 能读出所有相关分支
 
 本工作流基于任务描述撰写，以下条目在仓库中**未找到对应信息**，按约定标注为待确认：
 
-- `{{TODO: 待确认}}` — **上游项目 URL/名称**：任务描述为 `{{上游项目 URL/名称}}`。
-  仓库内的 `docs/upstream-*.md` 与 `tools/upgrade-check.py` 已指向 sing-box 官方仓库，
-  但**具体 URL 未在本次任务中给出**，未替你填。
-- `{{TODO: 待确认}}` — **模板目录**：任务描述为 `{{模板目录，例如 templates/ios、templates/android、templates/windows}}`。
-  本仓实际三端模板位于 `profiles/<大版本>/{desktop,android,ios}-lazy.json`，
-  **不是** `templates/<平台>/`。映射关系见 `CLIENTS_IOS_ANDROID_WINDOWS.md` §模板位置。
-- `{{TODO: 待确认}}` — **当前同步版本记录文件路径**：任务描述为 `{{版本文件路径}}`。
-  本仓已有 `singbox_version.txt` 承担该职责；若你指的是**另一个**文件，请指出。
+- ✅ **上游项目 URL/名称** —— 已确认：sing-box 官方仓库 `https://github.com/SagerNet/sing-box`，
+  官方文档 `https://sing-box.sagernet.org/`。
+- ✅ **模板目录** —— 已确认双轨制：可运行模板在 `profiles/<大版本>/{desktop,android,ios}-lazy.json`；
+  `templates/{ios,android,windows}/` 已建立，作为**三端索引入口**（各含一份 README，不含可运行配置）。
+  详见 [`../templates/README.md`](../templates/README.md)。
+- ✅ **当前同步版本记录文件路径** —— 已确认：`singbox_version.txt`（本仓既有的唯一版本真相）。
 - `{{TODO: 待确认}}` — **模块 4「仓库中只保留模板，不保存实际节点，不保存可运行配置」** 与本仓现状不符：
   `profiles/1.14/` 下存有三份**可运行配置**（占位节点，无真实凭据），这是仓库的既有设计
   且受 `placeholder_server` 门禁保护。本次未按任务描述改动它，**请你确认**是否要改变这一设计。
-- `{{TODO: 待确认}}` — **三端模板目录是否要新建**：任务描述建议 `templates/ios|android|windows`。
-  本次**未新建**（会与 `profiles/` 职责重叠且无人引用），请确认是否仍需要。
+- ✅ **三端模板目录** —— 已建立 `templates/{ios,android,windows}/`，定位为索引入口（见上）。

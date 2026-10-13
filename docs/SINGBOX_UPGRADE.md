@@ -137,6 +137,133 @@ IDLE（只读可提醒）
 
 ---
 
+## 五bis. B3bis 新增能力：三栏分类与矩阵写法
+
+废弃项是「**少了什么，怎么补**」；新能力是「**多了什么，用不用**」。
+后者**没有默认答案**，不写就等于隐式选了「不启用」—— 而真实原因往往是「根本没注意到它存在」。
+
+看 `python tools/upgrade-check.py` 报告的第 5 节【新功能清点】：它把
+`docs/upstream-changelog.md` 里的正式版新功能列出来，并标出哪些还没在矩阵里被收录
+（`new_feature_uncovered` 就是这条比对失败）。
+
+### 比对窗口：半开区间 `(policy.coverage_floor, 锁定版本]`
+
+> ⚠️ **不是「≥ 锁定版本」**。起点显式写在 `docs/version-matrix.json` 的 `policy.coverage_floor`，
+> 含义是「已逐条盘点到此」。
+>
+> 为什么不能直接用锁定版当起点：`ver_ge(ver, floor)` 的语义是 **「>=」**，
+> 这意味着**低于起点的版本不是「检查过」，而是「从来没进过检查」**（L43）。
+> 若用锁定版当起点，1.14.0 那 49 条正式版新功能会永远落在窗口外、一次都没被盘过，
+> 而门禁一路全绿 —— 而且升版到 1.15.0 那一刻窗口会把 1.14.x 整段拉回来，一次炸出几十条 ERROR。
+>
+> 因此 `coverage_floor` **只能显式声明**（不能用 `min(since)` 推导：「登记一条历史条目」就会把窗口拉低）。
+> 同一版的盘点结论落在 `docs/evidence/` 下，并在 `policy.inventories` 里登记口径：
+> `per-entry` = 逐条建条目 / `by-class` = 按类归档、结论只在文档里。
+> 若某条 `kind=new` 的 `since` 落在窗口之外（即 `since <= coverage_floor`），
+> 它必须写 `inventory` 指向盘点文档，且文档里要出现该条目的 id（`inventory_doc_unlinked` 会拦）。
+
+### 三栏分类（**逐条给我看、等我拍板，不得自行决定** —— 铁律 16）
+
+| 栏位 | 含义 | 矩阵写法 |
+|---|---|---|
+| **必须跟随** | 新写法取代旧写法、**没有开关**（例：1.15 把 `tun.stack` 换成 sing-tun 自带栈） | `kind="deprecated"` + `removed_in`（**不是** `new`） |
+| **必须决策** | 新能力，启用/不启用**由我拍板**（例：MASQUE / Tailcat / `auto_redirect`） | `kind="new"`，`adopt` 必填 |
+| **可放着** | 与场景无关或纯内部更新 —— **也要记一笔** | `kind="new"`，`adopt:"no"` + `reason` 写清「为何无关」 |
+
+### 拍板后写两个地方（少一个都会被门禁拦）
+
+```jsonc
+// docs/version-matrix.json 的 entries[] —— 机器依据
+{
+  "id": "new_masque_endpoints",
+  "kind": "new",
+  "since": "1.15.0",
+  "title": "MASQUE 端点（CONNECT-IP）",
+  "path": "endpoints[type=masque]",           // 可选：有字段可检测时才写
+  "expect": "absent",                          // 有 path 时必填：present=配置里必须有 / absent=必须没有
+  "adopt": "no",                               // yes | no | must
+  "reason": "现有 hy2/vless 节点已满足需求；MASQUE 需服务端支持",
+  "decide_by": "1.16.0",                       // 可选：到这个版本前必须重新看一次
+  "keywords": ["MASQUE", "CONNECT-IP"]         // 用于与 changelog 条目比对
+}
+```
+
+```markdown
+<!-- docs/DECISIONS.md —— 人的理由，模板见 §六ter -->
+```
+
+## 六bis. B1/B2：巡检与判断跨度
+
+**B1 巡检**
+
+```bash
+python tools/upgrade-check.py
+```
+
+报告五节：① 版本比对 ② 文档 diff ③ 矩阵对账 ④ 升级风险 ⑤ 新功能清点。
+
+> ⚠️ 若报告里出现 `matrix_path_unreachable`，说明**上游改过字段名或路径**、
+> 那条门禁**已经悄悄失效** —— 此时先更新矩阵的 `path`/`replacement`，再谈其他升级动作。
+
+> 上游文档快照的**平台能力两页**（`docs/clients/{apple,android}/features.md`）已纳入跟踪：
+> 它是 `PLATFORM-MATRIX.md` §1/§1a/§2/§2a 的**唯一权威源**。上游把某个
+> `:material-close:` 改成 `:material-check:` 时，仓库里硬编码的平台判据会把**正确写法判成 ERROR**。
+
+**B2 判断跨度**
+
+| 跨度 | 处理 |
+|---|---|
+| **补丁版**（1.14.2 → 1.14.3） | 通常只是修 bug，配置一般不用改。**仍要跑一遍报告** |
+| **小版本**（1.14 → 1.15） | **一定有废弃项**，必须逐条处理 |
+| **跨多个小版本** | 按版本顺序逐段处理 `docs/upstream-deprecated.md` |
+
+## 六ter. B5 收尾（别漏这一步）
+
+```bash
+python tools/gen-docs.py                # 重新生成人读版矩阵
+bash tools/check-all.sh --run           # 静态门禁 + 负向回归 + 启动级 + 逐份 check
+# 全部 0 ERROR 后：
+echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
+python tools/upgrade-check.py --write   # 更新上游文档快照
+```
+
+⚠️ **别漏这一步**：升版后要把 `docs/version-matrix.json` 的 `policy.coverage_floor` 推到新版本，
+并在 `policy.inventories` 里补一条该版的盘点记录（口径 `per-entry` 或 `by-class` + `evidence` 文档）。
+漏了**不会当场炸** —— `coverage_inventory_missing` 才会响，而那正是它存在的理由：
+**「升级了但没盘点」在窗口里看起来和「盘过了、没问题」一模一样**（L43）。
+
+> ⚠️ 上面最后两行（改 `singbox_version.txt` / `--write`）属于「**需用户同意的六个动作**」，
+> **先给人看 diff、得到同意再做**。
+
+**B3 附加：决策记录（`DECISIONS.md`）条目格式**
+
+```
+## D<n> <主题>：启用 / 不启用
+- **日期**：YYYY-MM-DD
+- **触发**：<上游版本 + 功能名>
+- **决策**：启用 / 不启用
+- **矩阵 ID**：`new_xxx`
+- **为什么**：……
+- **备选方案**：……（以及为何没选）
+- **前提/风险**：……（什么条件下该重新评估）
+```
+
+> 编号取名时**必须先看 `docs/DECISIONS.md` 现有的最大编号** —— 照抄示例会撞号。
+> 几件事同一理由时可以合写一条。
+
+**B3 门禁自检**：`python tools/audit.py`。相关 code：
+
+| code | 拦什么 |
+|---|---|
+| `new_feature_uncovered` | changelog 有新功能但矩阵没收录 |
+| `new_feature_without_adoption` | `kind=new` 缺 `adopt` / `reason` |
+| `new_feature_expect_invalid` | `adopt` 与 `expect` 矛盾（写了 `adopt:"no"` 却要求字段必须存在） |
+| `new_feature_decision_overdue` | 已过 `decide_by` 仍未拍板 |
+| `decision_without_record` / `decision_references_unknown` | 矩阵与 `DECISIONS.md` 双向不一致 |
+
+> **为什么「必须跟随」类不算 `new`**：它没有「用不用」的余地 —— 旧字段一删就得跟着走，
+> 归入 `deprecated` 那套（含 `removed_in` 升级风险）才正确。
+
 ## 七、本仓库现成的工具
 
 本仓已有一套与模块 2 对应、可直接使用的实现（**复用，不要另造**）：
