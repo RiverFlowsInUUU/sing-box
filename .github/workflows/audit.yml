@@ -41,7 +41,7 @@ jobs:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
 
-      - name: 门禁负向回归（故意改坏，确认门禁真的会响）
+      - name: 门禁负向回归（故意改坏 66 处，确认门禁真的会响）
         run: python tools/negtest.py
       - name: markdown 结构校验（围栏 / 标题层级 / 链接 / 锚点）
         run: |
