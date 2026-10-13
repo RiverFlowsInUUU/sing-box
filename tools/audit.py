@@ -548,12 +548,16 @@ def audit_repo_rules(cfg, rep: Report):
                 "sing-box 不会自动创建父目录，父目录不存在会直接 FATAL 启动失败",
             )
 
-    # 1b) profiles/ 下必须是占位值——公开仓库永不存真实节点
-    try:
-        rel = Path(str(rep.name)).resolve().relative_to(ROOT)
-    except ValueError:
-        rel = Path(str(rep.name))
-    if rel.parts and rel.parts[0] == "profiles":
+    # 1b) **入库的模板**必须是占位值——公开仓库永不存真实节点
+    #
+    # ⚠️ 判据**不能写成 `目录名 == "profiles"`**。那是在编码「这份配置住在哪个目录」，
+    # 而规则真正想说的是「这份配置**会被提交进仓库**」—— 两件事不等价：
+    #   · 改个目录名（哪怕只是重组），门禁就**静默失效**，而它恰恰是防真实节点外泄的那一道；
+    #   · 反过来，`templates/groups.json` 这类同样是入库产物的文件，旧判据根本不管。
+    # 所以改成按**语义**判：被 git 跟踪 ⇒ 入库 ⇒ 必须占位。
+    # `local/` 已 gitignore，天然落在「未跟踪」那一类，无需再特判。
+    rel = _rel_to_root(rep.name)
+    if rel is not None and _is_tracked(rel):
         for i, ob in enumerate(cfg.get("outbounds", [])):
             if not isinstance(ob, dict):
                 continue
@@ -564,8 +568,8 @@ def audit_repo_rules(cfg, rep: Report):
                 rep.error(
                     "placeholder_server",
                     f"outbounds[{i}] ({ob.get('tag')}) 的 server={srv!r} 不是占位域名。"
-                    "profiles/ 只允许 xxx.example.com 这类占位值；"
-                    "含真实节点的配置请放仓库外的 local/ 目录，不要提交",
+                    f"{rel.as_posix()} 是**入库文件**，只允许 xxx.example.com 这类占位值；"
+                    "含真实节点的配置请放仓库外的 local/ 目录（已 gitignore），不要提交",
                 )
 
     route = cfg.get("route", {})
@@ -2525,6 +2529,43 @@ def _tracked_files():
                 seen.add(f)
                 files.append(f)
     return files
+
+
+def _rel_to_root(p):
+    """把任意路径（绝对/相对、`Report.name` 里那种）归一成相对仓库根的 Path。
+
+    归一不了（在仓库外）时返回 None —— 调用方据此跳过，不要猜。
+    """
+    try:
+        return Path(str(p)).resolve().relative_to(ROOT)
+    except (ValueError, OSError):
+        return None
+
+
+_TRACKED_CACHE = None
+
+
+def _is_tracked(rel) -> bool:
+    """这个仓库内相对路径，是不是「会被提交进仓库」的文件。
+
+    ⚠️ 为什么要有它：门禁原先把「入库」写成 `目录名 == "profiles"`，
+    那是拿**目录布局**当**安全判据**。后果是目录一改名，防真实节点外泄的那道门禁
+    就静默失声 —— 而这类门禁失效本仓已经栽过不止一次（L25/L34/L39/L46）。
+    语义归位：**被 git 跟踪（或即将被跟踪）⇒ 会被公开 ⇒ 必须占位**。
+
+    用的是与 `_tracked_files()` 同一个来源（`ls-files` + 未跟踪但未忽略的新文件），
+    这样「刚写好还没 add 的配置」也会被当成入库文件 —— 否则又是本地绿、CI 红（L29）。
+    """
+    # 负向回归需要一个「临时入库身份」：它的样本天生在 local/ 下、是未跟踪的，
+    # 于是任何「是否会被提交」型门禁在样本上都不会响 —— 用例假失败。
+    # 只认 negtest.py 显式指定的那一个路径，不放宽其它任何东西；绝不真的 git add。
+    fake = os.environ.get("__NEGTEST_FAKE_TRACKED")
+    if fake and rel.as_posix() == _rel_to_root(fake).as_posix():
+        return True
+    global _TRACKED_CACHE
+    if _TRACKED_CACHE is None:
+        _TRACKED_CACHE = set(_tracked_files())
+    return rel.as_posix() in _TRACKED_CACHE
 
 
 def _is_negative_fixture(path: str) -> bool:

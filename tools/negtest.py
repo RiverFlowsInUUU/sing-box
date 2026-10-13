@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -217,9 +218,16 @@ def m_coverage_floor_declared_but_missing(cfg):
 
 
 def m_placeholder_server(cfg):
-    """profiles/ 里出现非占位域名（真实节点域名被提交进仓库）。"""
-    _by_tag(cfg, "🧪 Placeholder") if False else None
-    cfg["outbounds"][0]["server"] = "node-01.example.com"
+    """入库文件里出现非占位域名（真实节点域名被提交进仓库）。
+
+    ⚠️ 这个破坏函数曾经是**坏的**：它把 server 设成 `node-01.example.com` ——
+    那**本身就是占位域名**，门禁当然不会响。即使登记进 CASES 也永远 ✅，
+    是一条「假装在验、实际什么都没验」的死用例（L37 的形态）。
+    现在改成真域名，并登记进 CASES。
+    """
+    # 必须**不是**占位域名（PLACEHOLDER_DOMAINS = .example.com/.org/.net/.invalid/.test/.localhost），
+    # 否则本用例又变成死用例。用一个真域名形态、且刻意避开上述后缀。
+    cfg["outbounds"][0]["server"] = "node-01.my-vps-host.xyz"
 
 
 # (用例名, 破坏函数, 期望的 code, 期望级别, 作用范围)
@@ -228,6 +236,10 @@ def m_placeholder_server(cfg):
 #                       如模板 ⟺ profile 对账、文档散文扫查）—— 跑完立即还原
 #            "matrix" = 临时改**真实** docs/version-matrix.json（用于「门禁本身失效」这类
 #                       只能靠矩阵触发的检查，见 L39）—— 跑完立即还原
+# 判据是「这个文件会不会被提交」的用例。负向样本落在 local/ 下天然不是入库文件，
+# 靠 _audit_codes 注入 __NEGTEST_FAKE_TRACKED 给它一个临时身份（见 run_case_single）。
+TRACKED_SENSITIVE_CASES = {"placeholder-server"}
+
 CASES = [
     ("ad-gets-direct",            m_ad_gets_direct,            "ad_group_polluted",              "ERROR", "single"),
     ("ad-default-direct",         m_ad_default_direct,         "ad_group_default_not_block",     "ERROR", "single"),
@@ -245,6 +257,11 @@ CASES = [
     ("dns-detour-dangling",       m_dns_detour_dangling,       "dns_server_detour_missing",      "ERROR", "single"),
     ("detour-stale-group-name",   m_dns_detour_stale_name,     "doc_group_name_stale",           "ERROR", "repo"),
     ("ruleset-missing",           m_ruleset_missing,           "rule_ruleset_missing",           "ERROR", "single"),
+    # 防真实节点外泄的那一道。判据已由「目录名 == profiles」改为「被 git 跟踪 ⇒ 入库」
+    # （见 audit.py 该处注释），此用例确保它改了之后**仍然会响**。
+    # 注意：这里必须用 "single"（跑临时配置）而不是 "repo" —— 后者会真去改 profiles/ 下的
+    # 入库文件，一旦中途异常就可能把真域名留在仓库里，风险不对称。
+    ("placeholder-server",        m_placeholder_server,        "placeholder_server",             "ERROR", "single"),
     ("dup-tag",                   m_dup_tag,                   "dup_tag",                        "ERROR", "single"),
     ("direct-empty",              m_direct_empty,              "download_detour_empty_direct",   "ERROR", "single"),
     ("strict-route-on-mobile",    m_strict_route_on_mobile,    "platform_strict_route",          "ERROR", "single"),
@@ -276,7 +293,7 @@ MATRIX_FLOOR_HIGH = '"coverage_floor": "1.15.0",'   # 窗口起点高于 invento
 MATRIX_FLOOR_EMPTY = '"coverage_floor": "",'          # 干脆不声明窗口起点
 
 
-def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True):
+def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True, extra_env=None):
     """跑真实的 audit CLI，返回报出的 code 集合。不 mock、不 import 审计函数。"""
     cmd = [sys.executable, str(ROOT / "tools" / "audit.py"), "--json"]
     if no_check:
@@ -284,9 +301,12 @@ def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True):
     cmd.extend(repo_args)
     if path_or_none is not None:
         cmd.append(str(path_or_none))
+    env = None
+    if extra_env:
+        env = {**os.environ, **extra_env}
     proc = subprocess.run(
         cmd, cwd=str(ROOT), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=300,
+        encoding="utf-8", errors="replace", timeout=300, env=env,
     )
     try:
         data = json.loads(proc.stdout)
@@ -321,7 +341,14 @@ def run_case_single(name, mutate, base_text, level):
         raise RuntimeError(
             f"❗ 临时配置 {out} 会被整仓审计当普通配置扫进去，负向用例会失真"
         )
-    return _audit_codes(out, level)
+    # 有些门禁的判据是**「这个文件会不会被提交进仓库」**（如 placeholder_server）。
+    # 负向样本天生落在 local/ 下、是未跟踪的，于是这类门禁在样本上永远不会响 ——
+    # 用例会假失败（门禁没坏，是样本不具备触发条件）。
+    # 解：给这类用例提供一个**临时的「入库」身份**，跑完立刻摘掉。
+    # 只在本次子进程内生效，绝不真的去 git add。
+    fake_tracked = name in TRACKED_SENSITIVE_CASES
+    return _audit_codes(out, level, extra_env={"__NEGTEST_FAKE_TRACKED": str(out)}
+                        if fake_tracked else None)
 
 
 def _is_scan_target(path):
@@ -330,12 +357,15 @@ def _is_scan_target(path):
     audit 对 `local/` 只做顶层 glob（有意不递归，好让 local/_archive/ 天然免检）。
     所以负向样本必须落在子目录里 —— 这是个**隐式**约束，靠一条 runtime 断言守住，
     不然哪天把 NEGDIR 改成 local/ 顶层，整套负向回归会静默变假绿。
+
+    ⚠️ 「会不会被提交」的判据**必须与 `audit.py` 同源**。两边各写一份，
+    迟早一边改了、另一边留着旧写法 —— 那正是 L46 记的那类「两处独立判断叠加失效」。
+    所以这里直接 import audit 的 `_is_tracked`，不再自己拼。
     """
-    try:
-        rel = Path(path).resolve().relative_to(Path(ROOT).resolve())
-    except ValueError:
-        return False
-    return rel.parent.as_posix() == "local" or rel.parts[0] == "profiles"
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import audit  # 与审计共用同一套「入库」判据，避免两处定义漂移（L46）
+    rel = audit._rel_to_root(path)
+    return rel is not None and audit._is_tracked(rel)
 
 
 def run_case_repo(name, mutate, base_text, level):
