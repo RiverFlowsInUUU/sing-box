@@ -448,7 +448,9 @@ git branch -a                              # 能读出所有相关分支
   `templates/{ios,android,windows}/` 已建立，作为**三端索引入口**（各含一份 README，不含可运行配置）。
   详见 [`../templates/README.md`](../templates/README.md)。
 - ✅ **当前同步版本记录文件路径** —— 已确认：`singbox_version.txt`（本仓既有的唯一版本真相）。
-- `{{TODO: 待确认}}` — **模块 4「仓库中只保留模板，不保存实际节点，不保存可运行配置」** 与本仓现状不符：
-  `profiles/1.14/` 下存有三份**可运行配置**（占位节点，无真实凭据），这是仓库的既有设计
-  且受 `placeholder_server` 门禁保护。本次未按任务描述改动它，**请你确认**是否要改变这一设计。
+- ✅ **「仓库中只保留模板，不保存实际节点，不保存可运行配置」** —— **经确认按本仓现状保留**：
+  「不保存**实际节点**、不保存**可运行配置的实例**」= 严格成立（真实节点只进 `local/`，已 gitignore）；
+  但 `profiles/<大版本>/` 下**保留三份占位骨架**（`node-0X.example.com`，无任何真实凭据）——
+  它们是三端模板的实现本体，也是门禁对账基准（`placeholder_server` / `matrix_platform_stale`）。
+  删掉它们会让全部门禁失去比对对象，**不是本次目标**。
 - ✅ **三端模板目录** —— 已建立 `templates/{ios,android,windows}/`，定位为索引入口（见上）。
