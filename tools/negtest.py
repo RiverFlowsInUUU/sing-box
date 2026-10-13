@@ -274,7 +274,7 @@ def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True):
 
 
 class SkipCase(Exception):
-    """环境不满足（例如本机没有单 box 可执行文件），跳过而不是判失败。
+    """环境不满足（例如本机没有 sing-box 可执行文件），跳过而不是判失败。
 
     区分「门禁失效了」与「这次没法验」很重要：前者必须红，后者报绿就是撒谎。
     """
@@ -287,7 +287,28 @@ def run_case_single(name, mutate, base_text, level):
     # 文件名里带 android：audit 的 infer_platform() 靠文件名判平台
     out = NEGDIR / f"neg-android-{name}.json"
     out.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # audit 对 local/*.json 是**顶层 glob、不递归** —— 所以临时负向配置必须放子目录里。
+    # 否则它会被整仓审计顺手审一遍，用例断言的「某 code 出现了」可能是别的文件贡献的：
+    # 一个永远不响的门禁照样会「通过」（这正是本脚本要防的那类假绿）。
+    if _is_scan_target(out):
+        raise RuntimeError(
+            f"❗ 临时配置 {out} 会被整仓审计当普通配置扫进去，负向用例会失真"
+        )
     return _audit_codes(out, level)
+
+
+def _is_scan_target(path):
+    """这份文件会不会被 audit 当成「该审的配置」扫进去？
+
+    audit 对 `local/` 只做顶层 glob（有意不递归，好让 local/_archive/ 天然免检）。
+    所以负向样本必须落在子目录里 —— 这是个**隐式**约束，靠一条 runtime 断言守住，
+    不然哪天把 NEGDIR 改成 local/ 顶层，整套负向回归会静默变假绿。
+    """
+    try:
+        rel = Path(path).resolve().relative_to(Path(ROOT).resolve())
+    except ValueError:
+        return False
+    return rel.parent.as_posix() == "local" or rel.parts[0] == "profiles"
 
 
 def run_case_repo(name, mutate, base_text, level):
@@ -337,6 +358,11 @@ def run_case_matrix(name, mutate, base_text, level):
         MATRIX.write_bytes(original)
         if MATRIX.read_bytes() != original:
             raise RuntimeError(f"❗ 还原 {MATRIX} 失败——请手工 git checkout 恢复")
+        # 探针留下的临时文件也要清掉：它在 local/_negtest/ 里虽不被扫，但会积垃圾。
+        try:
+            (NEGDIR / ".matrix-probe.json").unlink()
+        except OSError:
+            pass
 
 
 def main():

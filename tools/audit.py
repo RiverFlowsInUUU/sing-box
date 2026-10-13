@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 
@@ -1138,7 +1139,10 @@ def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
     probed = 0
     unreachable = []
     unprobeable = []
-    tmp = LOCAL / ".matrix-probe.json"
+    # 探针是**临时**文件，放系统临时目录而不是仓库里 —— CI checkout 里没有 `local/`
+    # （它不入库），早先写 `LOCAL / ".matrix-probe.json"` 在 CI 上直接
+    # FileNotFoundError 把整个门禁跑崩（正是 L30 那类「环境依赖写在常量里」）。
+    tmp = Path(tempfile.gettempdir()) / "sb-matrix-probe.json"
     try:
         for e in matrix.get("entries") or []:
             path = e.get("path")

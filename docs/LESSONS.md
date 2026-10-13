@@ -1811,6 +1811,52 @@ heredoc 是「内容先经过了一层我不控制的解释器」。
 **涉及**：`tools/patch-text.py`、`AGENTS.md` 铁律 22、`tools/audit.py` 的 `audit_tools()`
 
 ---
+## L41 把临时文件写进 `local/` —— 我本机全绿，CI 直接跑崩
+
+**现象**：`5a130fe` 推上去后 CI 立刻红，报错原文：
+
+```
+File "/home/runner/work/sing-box/sing-box/tools/audit.py", line 1141, in audit_matrix_paths
+    tmp = LOCAL / ".matrix-probe.json"
+FileNotFoundError: [Errno 2] No such file or directory:
+    '/home/runner/work/sing-box/sing-box/local/.matrix-probe.json'
+```
+
+本机同一份代码 `0 ERROR`（`sing-box check` 与两次 `python tools/negtest.py` 都是绿的）。
+
+**根因**：探针的临时文件写到了 `LOCAL / ".matrix-probe.json"`，而 `local/` **不入库**
+（`.gitignore` 忽略、只存在我这台机器上）。CI 是 `git checkout` 出来的干净树 ——
+**根本没有 `local/` 这个目录**，`write_text()` 的父目录不存在就 ENOENT。
+探针在 CI 上反而是**最该跑**的那条（CI 里 `SINGBOX_BIN` 一定有值），
+于是「本机跳过、CI 必跑」的路径恰好落在了「本地有、CI 没有」的目录上。
+
+**为什么没被拦住**：这是 L29 / L30 的第三次变形，同一根因：
+**门禁/工具的输入输出路径依赖了本机的目录布局**。
+- L29：输入集合漏了「未 add 的新文件」（本机扫不到）；
+- L30：常量字符串的时区由**执行机器**解释（本机 +0800 / CI UTC 两个窗口）；
+- L41：输出目录只在本机存在。
+
+共同点：**同一份代码在不同环境里输入/输出不同**。而这三件事在我本机跑都全绿 ——
+「本机绿」永远是弱证据，这条在 L29 已写下，却又踩了一次。
+
+**修法**：
+1. 探针临时文件改用**系统临时目录**（`tempfile.gettempdir()`），与仓库布局解耦。
+2. 顺手把一个**隐式约束**变成会响的断言：`local/` 只做顶层 glob、不递归，
+   所以负向样本必须放在子目录里 —— 若哪天有人把 `NEGDIR` 改成 `local/` 顶层，
+   临时样本会被整仓审计顺手审一遍，用例断言的「某 code 出现了」可能是别的文件贡献的，
+   **一个永远不响的门禁照样会「通过」**。现在 `run_case_single()` 会直接抛错拦住。
+
+**局部验证做不到的事**：这两个问题**都不可能靠本机复现**。
+唯一有效的验证是「在没有 `local/` 的树上跑一遍」—— 已用 `mv local /tmp_local_bak`
+模拟过（结果 `4 个配置文件 + 10 份台账/扫查，0 ERROR`，与 CI 同形）。
+
+**门禁**：无（约束的是工具的路径选择；由 `tools/negtest.py` 的 `_is_scan_target()` 断言
+与 `check-all.sh` 的环境无关性承载）
+
+**涉及**：`tools/audit.py` 的 `audit_matrix_paths()`（`tempfile`）、`tools/negtest.py` 的
+`run_case_single()` / `_is_scan_target()`
+
+---
 ---
 
 ## 附：怎么加一条新教训
