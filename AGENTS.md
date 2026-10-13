@@ -109,7 +109,9 @@ templates/groups.json         ← 固定分流组骨架（🚀 Proxy / 🤖 AI /
 nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
 tools/
   audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
-                                平台矩阵对账（matrix_platform_stale / profile_drift）/ 模板覆盖对账
+                                平台矩阵对账（matrix_platform_stale / profile_drift）/ 模板覆盖对账 /
+                                新功能覆盖窗口对账（coverage_window_missing / coverage_inventory_missing /
+                                coverage_floor_stale / historical_feature_without_inventory）
   diff_config.py              ← 两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
   upgrade-check.py            ← 上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
   gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md（勿手改后者）
@@ -231,6 +233,10 @@ Android 上后两者都不可用（VpnService 托管环境没有可用网卡名�
 ```bash
 # 九项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义（route 层 + DNS 层）/ IPv4-only 端到端 / 新功能采纳）
 #   + 仓库级对账（平台差异矩阵 §4 ⟺ 三份 profile；templates/groups.json ⟺ 三份 profile 的分流组）
+#   + 新功能覆盖窗口对账（coverage_window_missing / coverage_inventory_missing / coverage_floor_stale /
+#     historical_feature_without_inventory / inventory_doc_missing / inventory_doc_unlinked / follow_up_invalid）：
+#     拦的是「上游加了新功能而仓库不知道」—— 注意 ver_ge(ver, floor) 的语义是「>=」，
+#     所以低于窗口起点的版本不是「检查过」，而是「从来没进过检查」（L43）
 #   + 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
 # audit.py 自己找 sing-box（ROOT/bin/ 或 PATH）；也认环境变量 SINGBOX_BIN
 #   ⚠️ 本机没有 bin/ 也没装进 PATH 时，--run 会**静默降级**为 INFO 跳过（看起来照样 PASS）。

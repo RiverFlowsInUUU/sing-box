@@ -201,6 +201,21 @@ def m_cache_path_absolute(cfg):
     cfg["experimental"]["cache_file"]["path"] = "C:/tmp/cache.db"
 
 
+def m_coverage_floor_raised(cfg):
+    """覆盖窗口起点高于已盘点版本 —— 声称盘过而实际没盘（L43）。"""
+    pass  # 真改动在 MATRIX_MUTATIONS 里（改的是矩阵文件，不是这份配置）
+
+
+def m_coverage_inventory_missing(cfg):
+    """覆盖窗口起点低于已盘点版本 —— 把已盘过的版本拉回比对窗口（L43）。"""
+    pass
+
+
+def m_coverage_floor_declared_but_missing(cfg):
+    """矩阵里干脆不声明覆盖窗口起点。"""
+    pass
+
+
 def m_placeholder_server(cfg):
     """profiles/ 里出现非占位域名（真实节点域名被提交进仓库）。"""
     _by_tag(cfg, "🧪 Placeholder") if False else None
@@ -242,11 +257,23 @@ CASES = [
     # 此后 find_paths 永远返回空、那条门禁静默失声，而配置侧门禁全部照旧全绿。
     # 这是唯一一类「改配置根本触发不了」的失效（L39），所以作用域是 matrix。
     ("matrix-path-renamed",       m_matrix_path_renamed,       "matrix_path_unreachable",        "ERROR", "matrix"),
+    # 覆盖窗口类（矩阵作用域，见 L43）：三种「看起来在查、其实没查」的形态。
+    ("coverage-floor-stale",      m_coverage_floor_raised,      "coverage_floor_stale",           "WARN",  "matrix"),
+    ("coverage-inv-missing",      m_coverage_inventory_missing, "coverage_inventory_missing",     "ERROR", "matrix"),
+    ("coverage-floor-missing",    m_coverage_floor_declared_but_missing, "coverage_window_missing", "ERROR", "matrix"),
 ]
 
 # 矩阵里的字段路径：既能真实触发矩阵，又确实是本仓关心的一条（1.12.0 已移除）。
 MATRIX_PATH_OLD = '"path": "route.rules[].geosite"'
 MATRIX_PATH_NEW = '"path": "route.rules[].geosite_renamed_by_upstream"'
+
+# 覆盖窗口的锚点：**只用单行字符串**。
+# 教训：这里最初写成跨行三引号字面量，结果被一次行尾转换（CRLF↔LF）悄悄改成
+# 不匹配的形态，用例直接以 RuntimeError 崩掉（见 L42 的同类陷阱：锚点必须能被逐字复现）。
+MATRIX_FLOOR_OLD = '"coverage_floor": "1.14.0",'
+MATRIX_FLOOR_LOW = '"coverage_floor": "1.13.0",'    # 窗口起点低于 inventories ⇒ 把已盘过的版本拉回窗口
+MATRIX_FLOOR_HIGH = '"coverage_floor": "1.15.0",'   # 窗口起点高于 inventories ⇒ 声称盘过而没盘
+MATRIX_FLOOR_EMPTY = '"coverage_floor": "",'          # 干脆不声明窗口起点
 
 
 def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True):
@@ -337,6 +364,25 @@ def run_case_repo(name, mutate, base_text, level):
 MATRIX = ROOT / "docs" / "version-matrix.json"
 
 
+# 每个 matrix 作用域用例声明自己的 (锚点, 替换)。写成表而不是分支，
+# 是为了让「这个用例到底改坏了什么」在一处就能读完 —— 否则测试本身的意图
+# 会随用例增多而散掉，而散掉的测试和没有测试一样（L37）。
+MATRIX_MUTATIONS = {
+    "matrix-path-renamed": (MATRIX_PATH_OLD, MATRIX_PATH_NEW),
+    # coverage-floor-stale（WARN）：把起点抬到 1.15.0 —— inventories 最高只到 1.14.0，
+    # 于是「声称盘过而没盘」被抓。这条同时会让窗口里的 1.14.1/1.14.2/1.14.3
+    # 变成无盘点记录（coverage_inventory_missing），一次改坏触发两条门禁是**故意**的：
+    # 两种缺口本来就是同一个事故的两面。
+    "coverage-floor-stale": (MATRIX_FLOOR_OLD, MATRIX_FLOOR_HIGH),
+    # coverage-inventory-missing：把起点压到 1.13.0 —— 1.14.0 那 49 条被拉回比对窗口
+    # 而 inventories 里没有对应记录，门禁必须响。这也是「随手改 floor 让 ERROR 消失」
+    # 这条捷径会撞上的墙。
+    "coverage-inv-missing": (MATRIX_FLOOR_OLD, MATRIX_FLOOR_LOW),
+    # coverage_window_missing：不声明起点。没有窗口就没有「上游加了东西而仓库不知道」的检测。
+    "coverage-floor-missing": (MATRIX_FLOOR_OLD, MATRIX_FLOOR_EMPTY),
+}
+
+
 def run_case_matrix(name, mutate, base_text, level):
     """临时改**真实**矩阵，跑整仓审计，再立即还原（同 run_case_repo 的纪律）。
 
@@ -345,10 +391,11 @@ def run_case_matrix(name, mutate, base_text, level):
     """
     original = MATRIX.read_bytes()
     text = original.decode("utf-8")
-    if original.count(MATRIX_PATH_OLD.encode("utf-8")) != 1:
-        raise RuntimeError(f"❗ 矩阵里找不到唯一的锚点 {MATRIX_PATH_OLD}")
+    old_anchor, new_anchor = MATRIX_MUTATIONS[name]
+    if original.count(old_anchor.encode("utf-8")) != 1:
+        raise RuntimeError(f"❗ 矩阵里找不到唯一的锚点 {old_anchor!r}")
     try:
-        MATRIX.write_bytes(text.replace(MATRIX_PATH_OLD, MATRIX_PATH_NEW).encode("utf-8"))
+        MATRIX.write_bytes(text.replace(old_anchor, new_anchor).encode("utf-8"))
         # 探针需要真实内核：没有可执行文件时**跳过**（不能报绿，那是撒谎）。
         codes = _audit_codes(None, level, no_check=False)
         if "matrix_probe_skipped" in codes:

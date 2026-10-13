@@ -78,7 +78,7 @@ docs/DECISIONS.md          决策记录（每条新功能的启用/不启用、�
 
 **但双向绑定只能证明门禁「存在」，证明不了它「会响」** —— 一个按早已不用的字面量匹配的门禁
 （L34）在代码里真实存在、在文档里也有出处，却永远不会报错。
-所以每道门禁还必须有一个**负向用例**：`tools/negtest.py` 故意改坏 25 处，
+所以每道门禁还必须有一个**负向用例**：`tools/negtest.py` 故意改坏 28 处，
 每处必须报出对应的 code（见 L37）。加新门禁时**必须**往 `CASES` 里登一个用例，
 不要临时现写脚本、跑完就删。
 
@@ -285,8 +285,20 @@ python tools/upgrade-check.py
 后者**没有默认答案**，不写就等于隐式选了“不启用” —— 而真实原因往往是“根本没注意到它存在”。
 
 1. 看 `python tools/upgrade-check.py` 报告的第 5 节【新功能清点】：
-   它把 `docs/upstream-changelog.md` 里 **≥ 锁定版本** 的所有正式版新功能列出来，
+   它把 `docs/upstream-changelog.md` 里的正式版新功能列出来，
    并标出哪些还没在矩阵里被收录（`new_feature_uncovered` 就是这条比对失败）。
+
+> ⚠️ **比对窗口不是「≥ 锁定版本」**，而是**半开区间 `(policy.coverage_floor, 锁定版本]`** ——
+> 起点显式写在 `docs/version-matrix.json` 的 `policy.coverage_floor`，含义是「已逐条盘点到此」。
+> 为什么不能直接用锁定版当起点：`ver_ge(ver, floor)` 的语义是 **「>=」**，
+> 这意味着**低于起点的版本不是「检查过」，而是「从来没进过检查」**（L43）。
+> 若用锁定版当起点，1.14.0 那 49 条正式版新功能会永远落在窗口外、一次都没被盘过，
+> 而门禁一路全绿 —— 而且升版到 1.15.0 那一刻窗口会把 1.14.x 整段拉回来，一次炸出几十条 ERROR。
+> 因此 `coverage_floor` **只能显式声明**（不能用 `min(since)` 推导：「登记一条历史条目」就会把窗口拉低）。
+> 同一版的盘点结论落在 `docs/evidence/` 下，并在 `policy.inventories` 里登记口径
+> （`per-entry` = 逐条建条目 / `by-class` = 按类归档、结论只在文档里）。
+> 若某条 `kind=new` 的 `since` 落在窗口之外（即 `since <= coverage_floor`），
+> 它必须写 `inventory` 指向盘点文档，且文档里要出现该条目的 id（`inventory_doc_unlinked` 会拦）。
 2. 把清单整理成**三栏**给用户看，逐条等拍板（**不得自行决定**，铁律 16）：
 
 | 栏位 | 含义 | 矩阵写法 |
@@ -334,6 +346,11 @@ bash tools/check-all.sh --run     # 静态门禁 + 负向回归 + 启动级 + �
 echo "1.15.0  checked 2026-xx-xx" > singbox_version.txt
 python tools/upgrade-check.py --write    # 更新上游文档快照
 ```
+
+⚠️ **别漏这一步**：升版后要把 `docs/version-matrix.json` 的 `policy.coverage_floor` 推到新版本，
+并在 `policy.inventories` 里补一条该版的盘点记录（口径 `per-entry` 或 `by-class` + `evidence` 文档）。
+漏了不会当场炸 —— `coverage_inventory_missing` 才会响，而那正是它存在的理由：
+「升级了但没盘点」在窗口里看起来和「盘过了、没问题」一模一样（L43）。
 
 > ⚠️ 上面最后两行属于「需用户同意的六个动作」（`singbox_version.txt` / `--write`），
 > **先给人看 diff、得到同意再做**。

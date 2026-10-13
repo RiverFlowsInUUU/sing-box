@@ -50,8 +50,9 @@ nodes/nodes.example.json      节点书写示例
 tools/
   audit.py                    门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
                               平台矩阵对账 / 模板覆盖对账 / 散文旧组名扫查 /
-                              矩阵 path ⟺ 内核交叉对账（matrix_path_unreachable）
-  negtest.py                  门禁负向回归（故意改坏 25 处，确认门禁真的会响）
+                              矩阵 path ⟺ 内核交叉对账（matrix_path_unreachable）/
+                              新功能覆盖窗口对账（coverage_window_missing / coverage_inventory_missing）
+  negtest.py                  门禁负向回归（故意改坏 28 处，确认门禁真的会响）
   check-all.sh                一条命令跑完：静态门禁 + 负向回归 + 启动级 + 逐份 sing-box check
   patch-text.py               安全改写文件：原子写 + 唯一锚点 + 不经 shell（铁律 22）
   diff_config.py              两份配置的字段差异比对（铁律 0 的执行工具，跨平台）

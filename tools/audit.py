@@ -75,7 +75,7 @@ def ver_ge(a: str, b: str) -> bool:
 
 # ---------------------------------------------------------------- 路径匹配
 
-SEG_RE = re.compile(r"^([A-Za-z0-9_\-]*)(\[([^\]]*)\])?$")
+SEG_RE = re.compile(r"^([A-Za-z0-9_$\-]*)(\[([^\]]*)\])?$")
 
 
 def _walk(node, segs, path, out):
@@ -209,8 +209,18 @@ def _loc(path, line=None) -> str:
 # ---------------------------------------------------------------- 主审查
 
 
-def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
-    """按 version-matrix.json 检查废弃/移除/平台差异。"""
+def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms, is_template: bool = False):
+    """按 version-matrix.json 检查废弃 / 移除 / 平台差异 / 新功能采纳。
+
+    `is_template=True` 用于 `templates/groups.json`：它是**骨架**，只放出站与策略组的骨架，
+    不含 `dns` / `inbounds` / `route` 的全量字段。「矩阵要求某新字段必须在配置里」
+    （kind=new / expect=present）这类断言在骨架上无从满足，硬跑只会得到一个假 ERROR（L43）——
+    所以跳过那一支，并回传跳过了哪些条目，由调用方打一条 INFO，
+    避免「静默跳过」又变成新的盲区。
+
+    返回：被跳过的 expect=present 条目 id 列表。
+    """
+    new_present_skipped = []
     for e in matrix["entries"]:
         kind = e.get("kind")
 
@@ -278,13 +288,17 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
             if not has_path or expect not in ("present", "absent"):
                 continue  # 无字段可检测（纯版本更新类）或数据不完整，由 audit_new_features 兜
             found = bool(find_paths(cfg, e["path"]))
-            if expect == "absent" and found:
-                rep.error(
-                    e["id"],
-                    f"[{e['id']}] 配置里出现了 {e['path']}，但本仓库对该新功能的决策是"
-                    f"「不启用」（{e.get('title', '')}）—— 要么删掉字段，要么把矩阵里的 adopt 改掉并写明理由",
-                )
-            elif expect == "present" and not found:
+            if expect == "absent":
+                if found:
+                    rep.error(
+                        e["id"],
+                        f"[{e['id']}] 配置里出现了 {e['path']}，但本仓库对该新功能的决策是"
+                        f"「不启用」（{e.get('title', '')}）—— 要么删掉字段，要么把矩阵里的 adopt 改掉并写明理由",
+                    )
+            elif is_template:
+                # 骨架模板没有 dns / inbounds / route 全量字段，不参与 present 断言。
+                new_present_skipped.append(e["id"])
+            elif not found:
                 rep.error(
                     e["id"],
                     f"[{e['id']}] 矩阵要求配置里必须有 {e['path']}（adopt={e.get('adopt')}），但没找到——"
@@ -343,6 +357,7 @@ def audit_matrix(cfg, rep: Report, matrix, target_version: str, platforms):
                     dd = rs.get("download_detour")
                     if dd and _empty(dd):
                         rep.error(e["id"], f"[{e['id']}] route.rule_set[{i}].download_detour={dd!r} 是空 direct 出站")
+    return new_present_skipped
 
 
 def _audit_jinx(route, rep: Report):
@@ -1766,34 +1781,53 @@ _CHANGELOG_NOISE = re.compile(
     r"|see\s+\[)",                     # “See [XXX](...)” 这类脚注指引
     re.I,
 )
+# 脚注定义体的开头（`**1**:`）。它一旦出现，本段剩下的行全是脚注散文，不再有功能条目 ——
+# 只靠正则逐行过滤会漏：脚注正文里有 `**not used by the open-source server**, and there…`
+# 这种以 `*` 开头的续行（L43）。
+_CHANGELOG_FOOTNOTE_RE = re.compile(r"^\*{0,2}\d+\*{0,2}\s*:")
+# 预发布段（alpha / beta / rc）的版本号形态
+_PRERELEASE_RE = re.compile(r"-(?:alpha|beta|rc)\b", re.I)
 
 
-def _changelog_features(floor_version: str):
-    """从 docs/upstream-changelog.md 抽出「>= floor_version」的新功能条目。
+def _changelog_features(version: str, include_prerelease: bool = True):
+    """从 docs/upstream-changelog.md 抽出「>= version」的新功能条目。
 
-    **故意包含 alpha / beta / rc 段**：这正是提前发现即将到来的新功能的唯一途径
-    （正式版发布时这些条目会再出现一次，故按归一化文本去重）。
+    一个函数两种口径，由 `include_prerelease` 选：
+
+    * `include_prerelease=True`（默认，给 `tools/upgrade-check.py` 的升级流程用）——
+      **故意包含 alpha / beta / rc 段**：这是提前发现「即将到来的新功能」的唯一途径。
+      升级流程跑在计划阶段，属于前瞻，不是发布承诺。
+    * `include_prerelease=False`（给 `audit.py` 的门禁用）—— 只认正式版段。依据是本仓库
+      只面向正式版（AGENTS.md 铁律 1）。两个理由：
+        ① 拿预发布段的条目当门禁，等于按「还没发布的东西」报警；
+        ② 预发布段与正式段有大量重复文本，版本号归一化 + 去重后，`1.14.0-beta.5` 独有的条目
+           会被算到 `1.14.0` 名下 —— 2014-10 实测：不筛正式段时 1.14.0 名下 102 条，
+           其中 53 条（OpenVPN、Cloudflare Origin CA、APK 包、macOS backport …）**根本不在**
+           1.14.0 正式版发布说明里（L43）。
+
     版本号归一化：`1.15.0-alpha.7` → `1.15.0`。
 
-    栏掉纯修补段（`Fixes and improvements`）与空行，返回去重后的 [(版本, 条目原文), ...]。
+    栏掉纯修补段（`Fixes and improvements`）与脚注定义体，返回去重后的 [(版本, 条目原文), ...]。
     """
     if not CHANGELOG.exists():
         return []
     text = CHANGELOG.read_text(encoding="utf-8")
     seen = set()
-    out = []
+    rows = []  # (ver, raw 段标题, feat)
     for m in re.finditer(r"^####\s+([0-9][0-9.\-a-zA-Z]*)\s*$", text, re.M):
         raw = m.group(1)
         base = re.match(r"(\d+\.\d+\.\d+)", raw)
         if not base:
             continue
         ver = base.group(1)
-        if not ver_ge(ver, floor_version):
+        if not ver_ge(ver, version):
             continue
         end = text.find("\n####", m.end())
         body = text[m.end(): end if end != -1 else len(text)]
         for line in body.splitlines():
             s = line.strip()
+            if _CHANGELOG_FOOTNOTE_RE.match(s):
+                break  # 脚注区开始了，后面没有功能条目
             if not s.startswith("*"):
                 continue
             feat = s.lstrip("*").strip()
@@ -1804,18 +1838,162 @@ def _changelog_features(floor_version: str):
             if key in seen:
                 continue
             seen.add(key)
-            out.append((ver, feat))
-    return out
+            rows.append((ver, raw, feat))
+    if not include_prerelease:
+        # 必须按「原始段标题」筛，而不是按归一化后的 ver —— 归一化已经丢掉了
+        # `-alpha/-beta/-rc` 信息，那时再筛就晚了。
+        rows = [r for r in rows if not _PRERELEASE_RE.search(r[1])]
+    return [(v, f) for v, _raw, f in rows]
+
+
+def coverage_window(matrix):
+    """算出「新功能覆盖窗口」的起点版本 —— 它写在矩阵里，是**声明**，不是推导。
+
+    为什么不能直接用锁定版（`singbox_version.txt`）当窗口起点：
+    上游每个正式版都会引入新功能，而锁定版**总在往前走**（1.14.3 → 1.15.0 → …）。
+    用锁定版当起点，就等于毎次升版都把上一个版本的整段拉进比对窗口：
+    升到 1.15.0 那一刻，`1.14.0` 的 49 条会突然变成 49 个 ERROR，
+    而人只能事后补一堆只为了关掉 ERROR 的空壳条目（L43）。
+
+    为什么也不能用 `min(since)` 当窗口起点（曾考虑过、已放弃）：
+    为了登记 1.14.0 的 `dns.optimistic`（`since: 1.14.0`），`min(since)` 会自动降到 1.14.0，
+    同样把 1.14.0 整段拉进来 —— 登记一个历史条目就炸一次，自毁。
+    「盘点到了哪一版」是**人工决定**，只能显式声明（`policy.coverage_floor`），
+    不能从数据里猜出来。
+
+    语义：`coverage_floor = X` 意思是「X 及之后的正式版，上游每一条新功能都已在矩阵里做过采纳决策」；
+    比 X 更早的版本已盘点完毕、不再逐条参与比对（它们的盘点结论在 `docs/evidence/` 下）。
+    """
+    explicit = (matrix.get("policy") or {}).get("coverage_floor")
+    if explicit:
+        return explicit, "policy.coverage_floor"
+    return None, "（矩阵里没写 policy.coverage_floor，无法判定窗口起点）"
+
+
+def audit_coverage_window(rep: Report, matrix, target_version: str):
+    """覆盖窗口起点与「已盘点版本」的对照校验。
+
+    两个概念很容易被搞反，但它们回答的是两个不同问题：
+
+    * `policy.coverage_floor` —— 「新功能覆盖比对从哪一版之后开始」（半开区间 `(floor, 锁定版]`）。
+      它就是「已逐条盘点到此」的那一版；这一版自己的条目已经归档，不重复比对。
+    * `policy.inventories` —— 「哪几版已经盘点过」以及**用哪种口径盘的**（可追溯性）。
+
+    关键不变量：`coverage_floor` 必须等于 `inventories` 里最大的那个 version。
+    两边不一致就是一起真实事故 —— 声明的盘点结论与实际盘点记录对不上（L43）：
+
+    * floor 比已盘点的高 ⇒ 声称盘过其实没盘，窗口静默变窄，门禁一片绿；
+    * floor 比已盘点的低 ⇒ 已盘过的版本会被反复拉回窗口，逼出一堆套话条目。
+
+    只把两者放在一起才能拦下真正的事故：升级到下一个正式版后忘了盘点，
+    而 floor 还是老值 —— 此时 changelog 窗口里空无一条，门禁一片绿，人以为没事（L43）。
+    所以还要单独查一条：**窗口内每一个「有正式版新功能」的版本都必须在 inventories 里**。
+    """
+    pol = matrix.get("policy") or {}
+    floor, src = coverage_window(matrix)
+    if not floor:
+        rep.error(
+            "coverage_window_missing",
+            "矩阵里没写 policy.coverage_floor —— 没有窗口起点就没有「上游加了新功能而仓库不知道」"
+            "的检测（L43）。请注意：不能用锁定版当窗口（升版会炸出一大堆历史条目），"
+            "也不能用 min(since) 推导（登记一个历史条目就会把窗口拉低），只能显式声明。",
+        )
+        return
+    invs = pol.get("inventories")
+    if not isinstance(invs, list) or not invs:
+        rep.error(
+            "coverage_inventory_missing",
+            "矩阵里没有 policy.inventories（已逐个盘点的版本清单）。只用 floor 拦不住「升级了但没盘点」："
+            "升级到下一个正式版后 changelog 窗口空无一条（floor 之后的正式版还没发布），"
+            "门禁全绿，人以为没事（L43）。",
+        )
+        return
+
+    tracked = []
+    for i, inv in enumerate(invs):
+        if not isinstance(inv, dict):
+            rep.error(
+                "coverage_inventory_missing",
+                f"policy.inventories[{i}] 不是对象（应为 {{version, scope, evidence}}）",
+            )
+            continue
+        ver, scope, ev = inv.get("version"), inv.get("scope"), inv.get("evidence")
+        if not ver or not scope:
+            rep.error(
+                "coverage_inventory_missing",
+                f"policy.inventories[{i}] 缺 version 或 scope（scope∈per-entry|by-class）",
+            )
+            continue
+        if scope not in ("per-entry", "by-class"):
+            rep.error(
+                "coverage_inventory_missing",
+                f"policy.inventories[{i}].version={ver} 的 scope={scope!r} 不合法"
+                f"（per-entry=逐条登记条目 / by-class=按类归档，结论落在 evidence 文档里）",
+            )
+            continue
+        tracked.append(ver)
+        if scope == "by-class":
+            if not ev:
+                rep.error(
+                    "coverage_inventory_doc_missing",
+                    f"policy.inventories 里 {ver} 是 by-class（没有逐条条目，结论只在文档里），"
+                    f"必须写 evidence 指向盘点文档",
+                )
+            elif not (ROOT / ev).exists():
+                rep.error(
+                    "coverage_inventory_doc_missing",
+                    f"policy.inventories 里 {ver} 的 evidence={ev!r} 文件不存在",
+                )
+
+    # ①② floor 与盘点记录必须互相对得上（见 docstring：两边不一致都是事故）
+    if tracked:
+        top = max(tracked, key=parse_version)
+        if parse_version(floor) > parse_version(top):
+            rep.warn(
+                "coverage_floor_stale",
+                f"policy.coverage_floor={floor} 高于 inventories 里已盘点的最高版 {top}（{src}）—— "
+                f"floor 的语义是「已盘点到此」，它不能高于已有盘点记录的版本："
+                f"否则就是声称盘过而未盘，窗口静默变窄（L43）",
+            )
+        elif parse_version(floor) < parse_version(top):
+            rep.error(
+                "coverage_inventory_missing",
+                f"policy.coverage_floor={floor} 低于 inventories 里已盘点的最高版 {top} —— "
+                f"已盘过的版本会被反复拉回比对窗口，逼出一堆只为关掉 ERROR 的套话条目（L43）",
+            )
+
+    # ③ 拦「升级了但没盘点」：窗口 (floor, 锁定版] 里每一版**有正式版新功能**的都得在 inventories 里。
+    #     只看「有 feature 的版本」而不看每一个版本，是因为 1.14.1/1.14.2 这类纯修补版
+    #     本来就没有可盘点的东西，要求为它们建一条记录是形式主义。
+    have_feat = {v for v, _f in _changelog_features(floor, include_prerelease=False) if v != floor}
+    missing = sorted(v for v in have_feat if not any(parse_version(v) == parse_version(t) for t in tracked))
+    if missing:
+        rep.error(
+            "coverage_inventory_missing",
+            f"覆盖窗口 ({floor}, {target_version}] 里这些正式版有新功能但没盘点记录："
+            f"{'、'.join(missing)}。升级流程漏了盘点那一步 —— changelog 窗口比对此时可能恰好是空的，"
+            f"门禁一片绿，人以为没事（L43）。要么补盘点记录，要么把 policy.coverage_floor 往前推。",
+        )
+
+    if rep.ok():
+        rep.info(
+            "coverage_window_ok",
+            f"覆盖窗口 ({floor}, {target_version}]；起点 {floor}（{src}）；已盘点版本："
+            + "，".join(
+                f"{i.get('version')}({i.get('scope')})" for i in invs if isinstance(i, dict) and i.get("version")
+            ),
+        )
 
 
 def audit_new_features(rep: Report, matrix, target_version: str):
     """新功能采纳台账校验（仓库级，每份配置都跑一次之外单独跑一次）。
 
-    三道检查：
+    四道检查：
       1. 数据完整性：kind=new 必须有合法 adopt + 非空 reason；有 path 的还必须有 expect。
       2. 未卜先知：decide_by 已过期而 adopt 仍缺失/非法 → ERROR（不能靠「忘了」来默认不启用）。
-      3. changelog 覆盖：上游 changelog 里 >= 锁定版本 的正式版新功能条目，必须被某条 kind=new
+      3. 覆盖底盘：上游 changelog 里 **>= 覆盖窗口起点** 的正式版新功能条目，必须被某条 kind=new
          的 keywords 覆盖；否则 ERROR —— 防止「上游加了新功能，仓库浑然不知」。
+         窗口起点由 `coverage_window()` 给出（不是锁定版，见该函数注释与 L43）。
       4. follow_up：条目可以登记「迁移时还需重新决策的参数」（如换 sing-tun 栈后 mtu 该取多少）。
          这类待办的判据在上游正式版文档里、不在配置里，静态检查判定不了对错，
          所以每次跑都打一条 INFO 提醒，避免它只活在某段散文里（L26）。
@@ -1828,6 +2006,9 @@ def audit_new_features(rep: Report, matrix, target_version: str):
             "（上游加了什么功能，仓库不会知道）",
         )
         return
+
+    # 覆盖窗口起点：先算出来，3b) 与第 5) 步都要用。
+    floor, floor_src = coverage_window(matrix)
 
     for e in news:
         eid = e.get("id", "?")
@@ -1860,6 +2041,37 @@ def audit_new_features(rep: Report, matrix, target_version: str):
                     f"[{eid}] adopt=no（不启用）却写 expect={e['expect']!r} —— "
                     f"不启用就该要求配置里没有这个字段，应写 \"absent\"",
                 )
+        # 3b) 落在「已盘点版本」里的条目（since <= 覆盖窗口起点）必须挂一份成文的盘点依据。
+        #     为什么：能在窗口之外新增条目，就说明在那个版本上做了一次追加盘点；
+        #     也可能本轮盘点就把该版本归档并登记了其中几条。两种情况的结论都必须落在文档里，
+        #     否则「已盘点」就是一句无凭无据的话（L43）。
+        #     连 `since == floor` 也算：起点那一版自己不再进入比对窗口，
+        #     它的盘点是靠文档而不是靠逐条比对保证的。
+        since, floor0 = e.get("since"), (floor or "")
+        if since and floor0 and parse_version(since) <= parse_version(floor0):
+            inv = e.get("inventory")
+            if not inv:
+                rep.error(
+                    "historical_feature_without_inventory",
+                    f"[{eid}] since={since} 不在覆盖窗口内（起点 {floor0} 那一版已盘点过），"
+                    f"属于已归档版本的条目，"
+                    f"必须写 inventory 指向盘点文档（如 docs/evidence/…-features-{since}-inventory.md）",
+                )
+            else:
+                ip = ROOT / inv
+                if not ip.exists():
+                    rep.error(
+                        "inventory_doc_missing",
+                        f"[{eid}] inventory={inv!r} 指向的文件不存在",
+                    )
+                else:
+                    body = ip.read_text(encoding="utf-8")
+                    if eid not in body:
+                        rep.error(
+                            "inventory_doc_unlinked",
+                            f"[{eid}] 盘点文档 {inv} 里没有提到这个条目 id —— 文档与矩阵没对上"
+                            f"（盘点结论必须能反向查到条目）",
+                        )
         # 4) decide_by 过期仍未决策 → 不能靠「忘了」蒙混过关
         db = e.get("decide_by")
         if db and not ver_ge(db, target_version):
@@ -1888,12 +2100,61 @@ def audit_new_features(rep: Report, matrix, target_version: str):
                 f"[{eid}] 迁移时还有附加待办（判据不在配置里，无法校验，只能提醒）：{items}",
             )
 
-    # 5) changelog 覆盖比对
-    feats = _changelog_features(target_version)
+        # 4c) follow_up 自身必须可被渲染 —— `tools/gen-docs.py` 会直接打印它的内容，
+        #     写成裸 dict/list 就得到一行 Python repr 泄漏到给用户看的 `docs/VERSION-MATRIX.md`。
+        #     先用 list 判定，再逐个元素查 dict 里有没有 todo（L43）。
+        if follow and not isinstance(follow, list):
+            rep.error(
+                "follow_up_invalid",
+                f"[{eid}] follow_up 必须是数组（元素 = 一句待办字符串，或 {{todo, when}} 对象），"
+                f"现在是 {type(follow).__name__}",
+            )
+        else:
+            for i, f in enumerate(follow):
+                if isinstance(f, dict):
+                    if not str(f.get("todo") or "").strip():
+                        rep.error(
+                            "follow_up_invalid",
+                            f"[{eid}] follow_up[{i}] 是对象但没写 todo —— docs/VERSION-MATRIX.md 会印出一行空白",
+                        )
+                elif not isinstance(f, str) or not f.strip():
+                    rep.error(
+                        "follow_up_invalid",
+                        f"[{eid}] follow_up[{i}]={f!r} 既不是字符串也不是含 todo 的对象",
+                    )
+
+        # 4d) 矩阵条目必需字段：`_schema` 里声明了这几个字段，但声明不产生任何约束 ——
+        #     缺了 id 的条目会以 `[?]` 出现在报错里（无法定位），缺了 kind 的条目会被静默跳过。
+        if not str(e.get("id") or "").strip():
+            rep.error(
+                "matrix_entry_missing_field",
+                f"kind=new 的第 {news.index(e)} 条条目没有 id —— 所有检查都会退化成 `[?]`，定位不了",
+            )
+        for req in ("title", "reason"):
+            if not str(e.get(req) or "").strip():
+                rep.error("matrix_entry_missing_field", f"[{eid}] kind=new 缺必填字段 {req}")
+        if e.get("kind") != "new":
+            rep.error(
+                "matrix_entry_missing_field",
+                f"[{eid}] 出现在 kind=new 集合里但 kind={e.get('kind')!r}",
+            )
+
+    # 5) changelog 覆盖比对（窗口本身的合法性由 `audit_coverage_window` 单独校验）
+    if not floor:
+        return  # 没窗口就没得比，且已由 audit_coverage_window 报错
+    # ⚠️ 窗口是**半开区间** (coverage_floor, target_version]：
+    #    语义是「已盘点到此为止」，即 floor 这一版已经盘过了、不再重复比对。
+    #    若写成 >= floor，登一条 since=1.14.0 的条目就会把 1.14.0 的 49 条重新拉进窗口，
+    #    而那 49 条已归档在 docs/evidence/…-features-1.14.0-inventory.md 里（L43）。
+    # 门禁只认正式版段；`tools/upgrade-check.py` 用同一个函数但保留预发布段（前瞻）。
+    feats = [x for x in _changelog_features(floor, include_prerelease=False) if x[0] != floor]
     if not feats:
         rep.info(
-            "new_feature_covered",
-            f"上游 changelog 中 >= {target_version} 没有可识别的新功能条目（可能全部是修补段），无需比对",
+            "coverage_window_empty",
+            f"新功能覆盖窗口 ({floor}, {target_version}] 里没有正式版新功能条目（"
+            f"1.14.1 / 1.14.2 / 1.14.3 都只有修补，1.15.0 尚未发布正式版）。"
+            f"注意：这**不等于**本次没查 —— 它只是说明窗口本身是空的；"
+            f"窗口里一旦出现条目就会被逐条比对（L43）。",
         )
         return
     uncovered = []
@@ -1905,15 +2166,18 @@ def audit_new_features(rep: Report, matrix, target_version: str):
     if uncovered:
         rep.error(
             "new_feature_uncovered",
-            f"上游 changelog 里 >= {target_version} 的正式版新功能有 {len(uncovered)} 条没被矩阵覆盖"
-            f"（keywords 比对）：" + "；".join(f"{v} {f}" for v, f in uncovered[:6])
+            f"上游 changelog 里 ({floor}, {target_version}]（覆盖窗口，起点 {floor_src}）的正式版新功能有 "
+            f"{len(uncovered)} 条没被矩阵覆盖（keywords 比对）："
+            + "；".join(f"{v} {f}" for v, f in uncovered[:6])
             + (" …" if len(uncovered) > 6 else ""),
         )
     else:
         rep.info(
             "new_feature_covered",
-            f"上游 changelog 中 >= {target_version} 的正式版新功能共 {len(feats)} 条，"
-            f"全部被 {len(news)} 条 kind=new 条目的 keywords 覆盖",
+            f"上游 changelog 中 ({floor}, {target_version}]（{floor_src}）的正式版新功能共 {len(feats)} 条，"
+            f"全部被 {len(news)} 条 kind=new 条目的 keywords 覆盖"
+            f"（另有 {len([e for e in news if e.get('since') and parse_version(e['since']) <= parse_version(floor)])} "
+            f"条属于已盘点过的版本，不参与比对）",
         )
 
 
@@ -2648,6 +2912,15 @@ def main():
     if not decisions_rep.ok():
         failed = True
 
+    # 新功能覆盖窗口：floor 与「已盘点版本」必须对得上
+    covwin_rep = Report("docs/version-matrix.json（覆盖窗口）")
+    audit_coverage_window(covwin_rep, matrix, version)
+    if covwin_rep.items and not args.json:
+        for lv, code, msg, where in covwin_rep.items:
+            print(f"[{lv[0]}] 覆盖窗口: {msg}" + (f"   ← {where}" if where else ""))
+    if not covwin_rep.ok():
+        failed = True
+
     # 防泄漏扫查（同上，与具体配置无关）：被跟踪文件里不许有未审阅的公网 IP
     redact_rep = Report("仓库防泄漏扫查（git ls-files）")
     audit_redaction(redact_rep)
@@ -2754,12 +3027,19 @@ def main():
             failed = True
             continue
 
-        audit_matrix(cfg, rep, matrix, version, platforms)
+        skipped = audit_matrix(cfg, rep, matrix, version, platforms, is_template=is_template)
         audit_platform_caps(cfg, rep, platforms)
         audit_repo_rules(cfg, rep)
         audit_loopback_guard(cfg, rep)
         if is_template:
             audit_template(rep)
+        if skipped:
+            rep.info(
+                "template_new_present_skipped",
+                f"这是骨架模板，已跳过 {len(skipped)} 条 kind=new 的 expect=present 断言"
+                f"（骨架只有出站与策略组，不含 dns / inbounds / route 全量字段）："
+                + "，".join(skipped),
+            )
         if binary and not is_template:
             run_singbox_check(binary, t, rep)
             if args.run:
@@ -2776,6 +3056,7 @@ def main():
     ledger_results = [
         (lessons_rep, {"matrix"}),
         (newfeat_rep, {"new-features"}),
+        (covwin_rep, {"coverage-window"}),
         (decisions_rep, {"decisions"}),
         (redact_rep, {"redaction"}),
         (tools_rep, {"tools"}),

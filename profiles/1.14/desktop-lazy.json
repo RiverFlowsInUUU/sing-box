@@ -76,7 +76,8 @@
       }
     ],
     "final": "dns-proxy",
-    "strategy": "ipv4_only"
+    "strategy": "ipv4_only",
+    "optimistic": true
   },
   "inbounds": [
     {
@@ -88,7 +89,8 @@
       "mtu": 9000,
       "auto_route": true,
       "strict_route": true,
-      "stack": "system"
+      "stack": "system",
+      "udp_nat_max": 4096
     }
   ],
   "outbounds": [

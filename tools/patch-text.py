@@ -37,6 +37,10 @@ spec.json 是一个数组，每个元素：
 
 附加保证：保留原行尾（CRLF/LF 混排也不动其它行）、保留无尾换行的文件形态、
 `--dry-run` 只报「哪个文件、第几行、改几处」。
+
+**同一文件多条 patch 顺序作用**（L42）：早先的实现对每条 patch 都从「原始文本」算全文快照，
+落盘时只取最后一条 ⇒ 同文件的第二条会连带把第一条的改写吞掉，而且每条都打印「✅ 改写」。
+现在每条 patch 校验并作用于「上一条已应用之后」的文本。
 """
 
 import argparse
@@ -75,7 +79,10 @@ def _denorm(text: str, nl: bytes, had_final_newline: bool) -> bytes:
 
 def apply_patch(spec, dry_run=False) -> int:
     failures = 0
-    planned = {}  # file -> [(lineno, old, new)]
+    # file -> (nl, had_final, 当前文本)。同一文件的多条 patch **顺序作用**在演进中的文本上：
+    # 每条 patch 的 find 都要在「上一条已应用」之后的文本里唯一 —— 否则第二条会拿旧快照替换，
+    # 而落盘只取最后一条的快照，前面的改写会被静默吞掉（真实事故见 L42）。
+    working: dict = {}
     for i, item in enumerate(spec):
         fid = f"spec[{i}]"
         if not isinstance(item, dict) or "file" not in item:
@@ -112,10 +119,11 @@ def apply_patch(spec, dry_run=False) -> int:
             print(f"  ❌ {fid} ({item['file']}): 允许多处必须显式写 \"count\": 0")
             failures += 1
             continue
-        raw = _read_bytes(p)
-        nl = _detect_newline(raw)
-        had_final = raw.endswith(nl)
-        text = _norm(raw, nl)
+        if item["file"] not in working:
+            raw = _read_bytes(p)
+            nl = _detect_newline(raw)
+            working[item["file"]] = (nl, raw.endswith(nl), _norm(raw, nl))
+        nl, had_final, text = working[item["file"]]
         # 外置文件的行尾可能是 CRLF，而仓库目标文件是 LF —— 统一成 \n 再匹配。
         find = find.replace("\r\n", "\n")
         repl = repl.replace("\r\n", "\n")
@@ -129,7 +137,7 @@ def apply_patch(spec, dry_run=False) -> int:
             continue
         lineno = text[: text.index(find)].count("\n") + 1
         new_text = text.replace(find, repl) if want == 0 else text.replace(find, repl, want)
-        planned.setdefault(item["file"], []).append((lineno, n, nl, had_final, new_text))
+        working[item["file"]] = (nl, had_final, new_text)
         print(f"  ✅ {item['file']}:{lineno}  匹配 {n} 处 → {'预览' if dry_run else '改写'}")
 
     if failures:
@@ -139,15 +147,8 @@ def apply_patch(spec, dry_run=False) -> int:
         print("\n--dry-run：未写入。")
         return 0
 
-    for fname, entries in planned.items():
+    for fname, (nl, had_final, text) in working.items():
         p = ROOT / fname
-        # 同一文件多条 patch：按顺序作用在原始文本上（每条已各自校验过唯一性）
-        raw = _read_bytes(p)
-        nl = _detect_newline(raw)
-        had_final = raw.endswith(nl)
-        text = _norm(raw, nl)
-        for _lineno, _n, _nl, _hf, new_text in entries:
-            text = new_text  # entries 里存的是「应用后」的全文，取最后一条
         out = _denorm(text, nl, had_final)
         tmp = p.with_name(p.name + ".tmp-patch")
         with open(tmp, "wb") as fh:  # 原子写的临时文件，先完整写完
@@ -155,7 +156,7 @@ def apply_patch(spec, dry_run=False) -> int:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, p)  # 原子替换；失败也不会留下半截文件
-    print(f"\n全部改写完成：{len(planned)} 个文件。建议接着跑 `bash tools/check-all.sh`。")
+    print(f"\n全部改写完成：{len(working)} 个文件。建议接着跑 `bash tools/check-all.sh`。")
     return 0
 
 

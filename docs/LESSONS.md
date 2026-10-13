@@ -1859,6 +1859,93 @@ FileNotFoundError: [Errno 2] No such file or directory:
 ---
 ---
 
+## L42 `patch-text.py` 两条 anchor 都报「✅ 改写」，落盘只留了后一条
+
+**现象**：一个 spec 里给同一份文件写两条 patch（`dns` 段加 `optimistic`、`tun` 段加 `udp_nat_max`），
+运行输出两条都是 `✅ … 匹配 1 处 → 改写`，但落盘后 `grep -c optimistic` = **0**、
+`udp_nat_max` = 1 —— 前一条被静默吞了。因为每条都打印成功，肉眼完全看不出谁没生效。
+
+**根因**：`apply_patch()` 里每条 patch 都从**原始文本**算一份「应用后全文」快照：
+`planned[file].append((lineno, n, nl, had_final, new_text))`，而落盘时
+`for _lineno, _n, _nl, _hf, new_text in entries: text = new_text` —— 循环只保留最后一条，
+前面的改写被覆盖。**逐条校验的都是原始文本**，所以每条都能「匹配 1 处」通过。
+
+**为什么没被拦住**：改写器只校验「锚点在原始文本里唯一」，从不校验「锚点在**上一条已应用之后**的文本里还存不存在」。
+所以「两条都成功」和「两条都生效」是两件事，而工具把前者当成了后者。
+同一份文件的多处改写只能靠**人肉多次调用、每次看一眼**，正是最容易被跳过的一步。
+
+**修法**：`apply_patch()` 引入 `working: dict[str, tuple[str, bool, str]]`（文件 → 当前行尾/尾换行/当前文本），
+每条 patch 校验并作用于「上一条已应用之后」的文本，最后按 `working` 落盘。
+并对 3 条 patch 的 spec 做了自验：净变化为 0 的往返跑（加 → 还原 → 再加）三道全 ✅、
+四份配置 `grep -c` 均为 1、JSON round-trip 全 SAME。
+
+**门禁**：`tool_selftest_failed`（`tools/audit.py` 的 `audit_tools()` 会对改写器做语义自检，
+含「同一文件多条 patch 必须顺序作用」这条不变量；注意它与 `tool_syntax_error` 不同：后者只管语法，前者管语义）。
+⚠️ 这道门禁**只查工具本身没坏**，查不了「我这次只调用了一次 patch-text.py 却以为两处都改了」——
+所以改完必须用 `grep -c` 复验落盘结果，改写器的 ✅ 输出不是证据（L42 的教训由此而来）。
+
+---
+
+## L43 把「覆盖窗口」当成「已盘点版本」，两个概念搞反了两边都不响
+
+**现象**：矩阵里 10 条 `kind=new` 全部 `since: 1.15.0`，而锁定版是 1.14.3。
+`new_feature_uncovered` 的比对基准是**锁定版** —— `ver_ge("1.14.0", "1.14.3")` 是 False，
+于是 1.14.0 那 49 条正式版新功能**永远落在窗口外，从建仓到现在没被盘点过一次**，
+而门禁一路全绿。
+
+**根因**：三个不同的量被写成了同一个变量（`tools/audit.py:1849` 的 `coverage_window()` 修掉了它）：
+
+1. 「上游 changelog 从哪一版开始要逐条比对」 —— 一旦绑到锁定版，
+   升版时窗口会把历史版本整段拉回来（把 floor 降到 1.14.0 实测：`_changelog_features` 从 10 条跳到 112 条）；
+2. 「哪几版已经盘点过」 —— 这是**可追溯性**，必须逐版留记录；
+3. 「下一个要盯的正式版」 —— 这是未来时。
+
+更隐蔽的是：把 2 当成 1 用（`min(since)` 推导 floor），登记一个历史条目就会把窗口拉低；
+把 3 当成 1 用（floor 拍得高于锁定版），则「升级后没盘点」这件事**在窗口里看不出来** ——
+1.15.0 正式版未发布时窗口本来就是空的。
+
+**为什么没被拦住**：`_changelog_features()` 用 `ver_ge(ver, floor)` 过滤，语义是「>=」
+⇒ **低于 floor 的版本不是「已检查、没问题」，而是「从来没进过检查」**。
+工具把这两件事表达成了同一个「没输出」，而人读日志时默认把「没报错」读成「查过了」。
+另一面：`_CHANGELOG_NOISE` 只逐行滤噪音，而 changelog 的脚注定义体（`**1**:` … `**34**:`）
+后面有以 `*` 开头的续行，逐行正则永远拦不住 ⇒ 1.14.0 段实测膨胀到 102 条（真值 49 条）。
+
+**修法**：`coverage_window(matrix)` 返回 `(floor, 来源)`，floor 只从 `policy.coverage_floor` 读（**不在窗口内的不猜**）；
+`policy.inventories` 逐版记录「已盘点」及其口径（`per-entry` / `by-class` + `evidence`）；
+`audit_coverage_window()` 三条不变量：floor 必须等于 inventories 里最大的 version、
+窗口里每个「有正式版新功能」的版本都必须在 inventories 里、by-class 的 evidence 文件必须真实存在。
+`_changelog_features(version, include_prerelease=False)` 遇到脚注定义体即 `break` 整段。
+
+**门禁**：`coverage_window_missing`、`coverage_inventory_missing`、`coverage_inventory_doc_missing`、
+`coverage_floor_stale`、`coverage_window_empty`、`coverage_window_ok`、
+`historical_feature_without_inventory`、`inventory_doc_missing`、`inventory_doc_unlinked`、
+`self_describing_invalid`、`follow_up_invalid`、`matrix_entry_missing_field`。
+
+---
+
+## L44 加了 `expect: present` 的矩阵条目，把骨架模板也当成配置审了
+
+**现象**：给 1.14.0 登记两条 `kind=new`（`path: "dns.optimistic"` / `path: "inbounds[type=tun].udp_nat_max"`，
+`expect: present`）之后，`templates/groups.json` 直接红 —— 而模板里**根本没有 `dns` / `inbounds` 键**，
+它只是「该有哪些分流组」的骨架，不是一份可运行的配置。
+
+**根因**：`main()` 的逐目标循环里 `is_template` 只豁免 `run_singbox_check` / `run_singbox_run`，
+而 `audit_matrix()` 对模板**照跑**（`tools/audit.py:212`）；`expect=present` 的判据是
+`find_paths(cfg, path)` 非空，模板上必然是空 ⇒ 稳定的假 ERROR。
+
+**为什么没被拦住**：`infer_platform()` 对认不出平台的文件名返回三平台全集，
+模板因此不会被任何平台规则挡下；而 `kind=new` 的 `expect` 校验此前没有任何「模板豁免」的概念 ——
+它把「骨架模板」和「可运行配置」当成了同一种输入。
+
+**修法**：`audit_matrix(..., is_template=False)` 新增 `is_template` 参数，
+`expect=present` 命中为空且 `is_template` 为真时**不打 ERROR**，改收集进 `new_present_skipped`
+并统一打一条 INFO `template_new_present_skipped`（写清「模板没有 dns/inbounds 键，这一条不适用」）；
+`main()` 调用点传 `is_template=is_template`。
+
+**门禁**：`template_new_present_skipped`（INFO，专门说明「这条不是漏查」）、`matrix_entry_missing_field`。
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

@@ -79,6 +79,8 @@
 | 不启用 | 1.15.0 | — | `new_tailcat_inbound_outbound` | Tailcat 出入站（Tailscale 数据面） |
 | 不启用 | 1.15.0 | — | `new_tls_certificate_sha256_pinning` | TLS 整证书 SHA-256 固定（certificate_sha256 / client_certificate_sha256） |
 | 不启用 | 1.15.0 | — | `new_tun_auto_redirect_android` | Android auto_redirect 全功能支持 |
+| 启用 | 1.14.0 | — | `new_dns_optimistic_cache` | 乐观 DNS 缓存（optimistic DNS cache） |
+| 启用 | 1.14.0 | — | `new_udp_nat_max` | UDP NAT 会话上限（udp_nat_max） |
 | 必须跟随 | 1.15.0 | 1.17.0 | `new_tun_sing_tun_stack` | sing-tun 自带 TCP/IP 栈（取代 tun.stack） |
 
 决策含义：
@@ -264,6 +266,17 @@
 - 覆盖关键词：`cache file write buffering`, `buffer_size`
 - 官方：https://sing-box.sagernet.org/configuration/experimental/cache-file/#buffer_size
 
+### `new_dns_optimistic_cache`
+
+- 类别：新功能采纳
+- 采纳决策：启用（`adopt=yes`）
+- 自版本：1.14.0
+- 配置应有状态：`present`
+- 字段路径：`dns.optimistic`
+- 采纳理由：启用。缓存条目过期但仍在窗口（默认 3d）内时先返回旧值、后台刷新，对移动端「切网后第一次请求要等 DNS」的体感有直接改善。官方文档明确它与 disable_cache / disable_expire 冲突，本仓库两份都没用，无冲突。
+- 覆盖关键词：`optimistic dns cache`, `optimistic`
+- 官方：https://sing-box.sagernet.org/configuration/dns/#optimistic
+
 ### `new_dns_server_address_rule_item`
 
 - 类别：新功能采纳
@@ -366,6 +379,17 @@
   - 换 sing-tun 自带栈后重新确认 inbounds[type=tun].mtu 取值（触发：升级到 1.15.0 正式版时（官方对比表用 1500/4064/65535，本仓库现为 9000））
 - 备注：迁移时另有附加待办，见 follow_up 字段（门禁 code matrix_follow_up_reminder，详见 docs/LESSONS.md L26）。
 - 官方：https://sing-box.sagernet.org/migration/#migrate-tun-stack
+
+### `new_udp_nat_max`
+
+- 类别：新功能采纳
+- 采纳决策：启用（`adopt=yes`）
+- 自版本：1.14.0
+- 配置应有状态：`present`
+- 字段路径：`inbounds[type=tun].udp_nat_max`
+- 采纳理由：启用（只定上限）。官方默认行为是未设或为 0 时「iOS 用 4096，其他平台按内存总量在 4096–16384 之间取，探测不到内存时用 16384」，也就是不写就没有上限。本仓库显式写 4096，给非 iOS 平台加一道内存上限，对应历史上那次 Android 端内存占用冲到 1GB 的事故方向。同段引入的 udp_mapping / udp_filtering 保持官方默认（endpoint_independent），不写。
+- 覆盖关键词：`udp nat options`, `udp_nat_max`, `udp_mapping`, `udp_filtering`
+- 官方：https://sing-box.sagernet.org/configuration/shared/udp-nat/
 
 ### `platform_process_path_rule`
 
