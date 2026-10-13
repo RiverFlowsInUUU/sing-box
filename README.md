@@ -30,7 +30,7 @@
 ## 仓库结构
 
 ```
-AGENTS.md                     AI 入口与 19 条铁律
+AGENTS.md                     AI 入口与 26 条铁律
 README.md                     你在读的文件
 singbox_version.txt           当前锁定的 sing-box 正式版
 docs/
