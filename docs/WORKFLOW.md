@@ -1,7 +1,12 @@
 # WORKFLOW.md — 完整工作流
 
-> 本文件说明「怎么用这套仓库」和「怎么维护这套仓库」。给 AI 的下手顺序见根目录 `AGENTS.md`，
-> 分享链接怎么翻译成 outbound 见 `docs/PROTOCOL-MAPPING.md`。
+> 本文件说明「怎么用这套仓库」和「怎么维护这套仓库」。
+>
+> **入口已按职责分成两扇门，先确认你要动的是"配置"还是"规则"：**
+> - 改配置（给节点、出配置、排障）→ 根目录 `AGENTS.md` + `python tools/mknode.py`
+> - 改规则（升级内核、加门禁、改矩阵、改组 tag）→ 根目录 `MAINTAINERS.md`
+>
+> 分享链接怎么翻译成 outbound 见 `docs/PROTOCOL-MAPPING.md`（只在手工拼节点时才需要）。
 
 ## 零、这套仓库要解决什么问题
 

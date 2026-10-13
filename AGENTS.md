@@ -1,185 +1,146 @@
-# AGENTS.md — sing-box 配置生成工作流（AI 入口）
+# AGENTS.md — sing-box 配置工作流（AI 入口 · 司机版）
 
-> 本文件是**给 AI 读的入口**。任何人（或任何 AI）拿到本仓库后，按本文流程即可根据用户提供的
-> 节点分享链接，生成**当前 sing-box 正式版可实际运行**的 Android / iOS / Windows 配置。
+> 本文件是**给要改配置的人/AI 读的**。目标：拿到分享链接 + 目标平台，
+> **一条命令**产出「能在当前 sing-box 正式版上跑起来」的配置。
+>
+> 你不需要背规则。规则已经编译进了工具里 —— 你只需要**把链接交给工具**。
+> 走的是快车道；想抄近路（手工拼 JSON）才需要读下面那些铁律。
 
 ## 0. 一句话任务
 
-用户只给**节点分享链接**（`vmess://` `vless://` `trojan://` `hysteria2://` `ss://` `anytls://` …）
-和**想要的落点**（代理组 / 智能组 / 去广告组 三个分流组之一），你负责：
-
-0. **先读 `docs/LESSONS.md`（事故台账）** —— 里面逐条记录了历史上真机上出过的事故、
-   根因、以及对应的门禁 code。开工前扫一遍，别重犯。
-1. 查证**当前正式版**是什么版本、有哪些字段已废弃/已移除 → `singbox_version.txt` + `docs/VERSION-MATRIX.md`
-2. 用 `docs/PROTOCOL-MAPPING.md` 把分享链接翻译成 `outbounds[]` 里的一个节点对象
-3. 把该节点塞进用户指定的分流组的 `outbounds` 列表
-4. 用 `tools/audit.py` 跑一遍门禁（含 `sing-box check`）
-5. 输出**平台对应**的完整 JSON 给用户
-
-**不要凭记忆写字段。** 每个字段都必须能在 `docs/PROTOCOL-MAPPING.md` 或 schema 里查到。
-
-### 0.1 铁律 0：给用户改配置前，先做字段差异比对
-
-如果用户给了一份**已有的配置**，让你改（不管改多小），**必做**：
+用户给**节点分享链接**（`vmess://` `vless://` `trojan://` `hysteria2://` `ss://` `anytls://` `tuic://`）
++ **目标平台**（desktop / android / ios）+ **落点**（代理组 / 智能组），你负责出一条命令：
 
 ```bash
-python tools/diff_config.py 用户原始配置.json 我改完的配置.json
+python tools/mknode.py 'vless://...' 'vmess://...' --platform ios --group proxy
 ```
 
-输出三段：`只在原始配置里（可能被我删了）`、`只在生成配置里（可能是我加的）`、
-`两边都有但值变了`。**每一个差异都必须能说出为什么**。说不出原因的，就按原始配置保留。
-这条是拿真实事故换来的（见 `docs/LESSONS.md` 的 **L4**）：我当初凭印象重写模板，
-把用户原始配置里本来就有的 `auto_detect_interface: true` 删了，直接导致真机没网。
+它内部做完四件事，**一步不落**：
+
+| # | 做什么 | 由谁保证 |
+|---|---|---|
+| 1 | 链接 → outbound | `tools/share-link.py`（reality 块、aid 缺省、SS2022 密钥长度、transport、flow 值域…） |
+| 2 | 套骨架、换掉占位节点 | `profiles/<ver>/<platform>-lazy.json` |
+| 3 | 新节点 tag 加进目标组 | 组名常量与 `audit.py` 逐字一致 |
+| 4 | 跑门禁（含 `sing-box check`） | `tools/audit.py` |
+
+产物落 **`local/<platform>.json`** —— 含真实节点，`.gitignore` 已忽略，**永不提交**。
+
+### 三个选项
+
+| 选项 | 什么时候用 |
+|---|---|
+| `--group ai` | 用户说"给 AI 用""走台湾节点"→ 落到 `🤖 AI` 组 |
+| `--name 香港01` | 用户想自己命名节点（可重复，按顺序对应链接） |
+| `--keep-placeholders` | 想在骨架基础上继续手工加东西（默认**删掉**占位节点并清理悬空引用） |
+
+`--group ad` 会被**直接拒绝** —— `🚫 AD` 组只放 `block`，永远不放代理节点。
+
+### 交付前只有一条硬规矩
+
+**不要把没跑过门禁的配置交给用户。** `mknode.py` 已经替你跑了；如果你手工改了产物，
+再跑一次：
+
+```bash
+python tools/audit.py local/ios.json --platform ios
+```
+
+退出码 `0` 才算交付。有 `[E]` 就是**别发**。WARN 可以发，但要在回复里说明。
+
+### 交付话术（第 5 节有完整版）
+
+必须说清四件事：目标 sing-box 版本号 / 目标平台 / 新节点落在哪个组 / 门禁结果。
+**不得声称"已实测联网可用"** —— 除非用户在本机真跑了 `sing-box run`。
+
+---
 
 ## 1. 硬性铁律
 
+> ⚠️ **下面这些是"抄近路"才会用到的**。你走 `mknode.py` 快车道时，铁律 2/3/5/6/9/12/13/14
+> 都已经在工具与门禁里了 —— **不用背，错了会被当场拦下**。
+>
+> 真正需要你**主动记住**的只有两条：**铁律 7（别把真实节点写进仓库）** 和 **铁律 17（改仓库先给人看 diff）**。
+> 这两条机器判不了"你想干什么"，只能你自己守。
+
+| # | 铁律 | 谁在守 |
+|---|------|--------|
+| 1 | **只面向正式版**。现行版本记在 `singbox_version.txt`；不用 `-alpha`/`-beta`/`-rc` 字段 | `mknode.py` 读该文件 |
+| 2 | **未知字段 = 致命错误**（`FATAL ... json: unknown field`） | `audit.py` + schema |
+| 3 | **已移除字段 = 致命错误** | `audit.py` 查 `version-matrix.json` |
+| 4 | **`check` 通过 ≠ 配置正确**。`check` 不校验平台能力、不校验规则集顺序、对"已废弃未移除"的字段完全静默 | 交付前跑 `--run` |
+| 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限 | `audit.py` + `PLATFORM-MATRIX.md` |
+| 6 | **分流组只有三个**：`🚀 Proxy`（urltest）、`🤖 AI`（urltest）、`🚫 AD`（出口恒为 `block`）+ `direct`/`block`。tag 必须逐字带 emoji。代理组与智能组里**只放真实节点，不嵌套组** | `audit.py`、`mknode.py` 别名表 |
+| 7 | ⚠️ **任何时候、任何文件都不放真实节点**。`profiles/` 只允许占位域名；真实凭据只进 `local/`（已 gitignore）。范围是**整个被跟踪仓库**，`docs/` 里的散文同样是公开的。**指针也算泄漏物**：force-push 只挪指针，旧对象仍可按 SHA 直取（实测 HTTP 200）⇒ 引用事故写「日期 + 背景」，**不写 commit SHA** | `sensitive_ip_in_repo` / `placeholder_server` / `redaction_clean` 三道 + **你自己** |
+| 8 | **规则集走 CDN**，前缀统一 `https://testingcf.jsdelivr.net/gh/` | `audit.py` |
+| 9 | **广告规则集用 Jinx**（不用 `MetaCubeX` 的 `category-ads-all`）。顺序：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`。DNS 层与 route 层是**两张独立的顺序表**，改一处必须改另一处 | `_audit_dns_adblock()` |
+| 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） | — |
+| 11 | **不在本机乱试**。本机有 OpenClash 网关，本机 `run` 的**连通性结论一律不可信**（DNS 被劫持，实测过）。只允许读配置 / 读官方文档 / 读内核源码。`check` 与 `--run` 只验「能不能启动」 | — |
+| 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**，否则出站回灌 tun ⇒「能启动但没网、节点全无延迟、连接数暴涨」 | `tun_without_auto_detect_interface` |
+| 13 | **日志里 `using outbound/selector[🚫 AD]: operation not permitted` 是正常的**（`syscall.EPERM` 就是"拦住"的意思），**别去"修"**。反过来说：`🚫 AD` 的 `default` 必须始终是 `block` | `ad_group_default_not_block` |
+| 14 | **「只走 IPv4」必须端到端**：`route.rules` 里要有一条 `{"action":"resolve","strategy":"ipv4_only"}`，位置**紧跟 `hijack-dns` 之后**（放末尾等于没放） | `resolve_missing_ipv4_only` / `resolve_not_first` |
+| 15 | **出口 IP 的地址族不由客户端决定**。看到 IPv6 出口**不要**继续加固本地，先确认是不是节点自身的 AAAA；要改去服务端 | — |
+| 16 | **上游新功能必须显式写下「启用/不启用/必须跟随」**，不写等于隐式选了"不启用" | 见 `MAINTAINERS.md` |
+| 17 | ⚠️ **改配置、改流程都先拉仓库、先看 diff**。改完**先 `git diff` 给人看、得到同意、才 `commit`/`push`**。**不得直接覆盖已有文件**。克隆拿不到 `local/`，真实节点只能由用户当场提供 | **你自己** |
+| 18 | **依据优先级：官方文档 > 官方源码 > 本仓文档**。冲突时以官方为准并**当场修本仓文档**；追不到出处的写成「未验证」而不是写成结论 | — |
+| 19 | **平台差异必须同时落三处**（profile + `PLATFORM-MATRIX.md` §4 一行 + 门禁），缺一就是静默失效 | `matrix_platform_stale` / `profile_drift` |
+| 20 | **三个组 tag 是不可随手改的契约**。改 tag 必须端到端改（profile + 模板 + 矩阵 + 全部散文 + `local/`）。**引用面必须靠 grep 列，不能靠记忆** —— `dns.servers[].detour` 是个反直觉的落点 | `group_tag_incomplete` / `dns_server_detour_missing` |
+| 21 | **凡是把外部事实写进代码/文档的地方，都要配一个探针或快照**。最危险的失效是「门禁还在、判据已经落空」——上游把字段改名后 `find_paths` 永远返回空，门禁**静默失声**而全仓照样全绿 | `matrix_path_unreachable` / `audit_tools()` |
+
+### 过程铁律（22–26）：**只在"抄近路/维护仓库"时适用**
+
+这五条是 2026-10-13 一次 90 分钟任务（实际产出 30 分钟）换来的，见 `docs/LESSONS.md` L45。
+**根因是压缩失忆**：上下文被摘要后，"我已经读过这个文件""我已经否决过这个方案"会被先吃掉。
+
 | # | 铁律 |
 |---|------|
-| 1 | **只面向正式版**。现行正式版记在仓库根 `singbox_version.txt`；不用 `-alpha` / `-beta` / `-rc` 字段去写配置 |
-| 2 | **未知字段 = 致命错误**。sing-box 对未知字段直接 `FATAL ... json: unknown field`，启动失败 |
-| 3 | **已移除字段 = 致命错误**。见 `docs/VERSION-MATRIX.md` 的"已移除"列 |
-| 4 | **`check` 通过 ≠ 配置正确**。`check` 对"已废弃但未移除"的字段可能完全静默（例如 `download_detour`），也不校验平台能力、不校验规则集顺序。必须同时过 `docs/VERSION-MATRIX.md` 和 `docs/PLATFORM-MATRIX.md` |
-| 5 | **平台能力不同**。iOS/Android 不支持 `strict_route`；Android 无 `process_name` 权限等。见 `docs/PLATFORM-MATRIX.md` |
-| 6 | **分流组只有三个**：`🚀 Proxy`（默认代理，**本身就是 urltest**）、`🤖 AI`（**也是 urltest**，独立优选）、`🚫 AD`（**出口只有 `block`**）；再加 `direct` 与 `block` 两个出站。**三个组的 tag 必须逐字带 emoji**（`🚀 Proxy` / `🤖 AI` / `🚫 AD`），它们既是引用目标也是客户端策略组列表里的显示名。**`🚀 Proxy` 与 `🤖 AI` 的 `outbounds` 里只放真实节点，不要嵌套组**（不引用 `🚀 Proxy`）。国内/私有/广告**不出组**，用规则直连或落 `🚫 AD` |
-| 7 | **任何时候、任何文件都不放真实节点**。`profiles/` 下只允许占位域名（`node-01.example.com`）；含真实凭据的配置一律写进仓库外的 `local/`（已在 `.gitignore`），**仅存本地，永不提交、永不推送**。<br>⚠️ **范围是整个被跟踪仓库，不只是 `profiles/`** —— `docs/` 里的散文同样是公开的。写证据/台账时禁止出现节点域名、节点 IP、密码（发生过一次：L18 的证据文档写了“实测”，却把节点域名与它的 A/AAAA 一起写进了公开仓库）。<br>`audit.py` 有三道兜底：`placeholder_server`（`profiles/` 的 server 字段）、`sensitive_ip_in_repo`（全仓库未审阅公网 IP）、`redaction_clean`（无命中时的通过记录），扫查范围含**被跟踪文件 + 尚未 add 的新文件 + commit message**（`git ls-files` 与 `git ls-files --others --exclude-standard` 合并 —— 只看前者会漏掉新写的文档，本地绿、CI 红，见 L29）（commit message 只追 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后 —— 「把要拦的 SHA 写进仓库」会重新泄漏一次，见 L24）<br>⚠️ **指针也算泄漏物**：force-push 只重置分支指针，旧对象在 GitHub 上仍可按 SHA 直取（实测 HTTP 200）⇒ **引用事故一律写「日期 + 背景」，不写 commit SHA、不写旧链接**。同理，判定“某个 SHA 是坏的”不能靠名单（名单本身就得写下那个 SHA），改用时间切点。<br>✅ **最新状态**：分两段看，别混为一谈。<br>① **2026-10-12 删库重建后**：旧仓的所有对象随旧仓一起消失，实测 `github.com/<owner>/<repo>/commit/<旧 SHA>` 与 `.patch` 均为 **HTTP 404**。<br>② **2026-10-13 一次 force-push 后**：为清掉一个被 `--amend` 修改过 message 的已推送提交，执行了 `push --force-with-lease`；旧提交随即**又可直取**（同一 URL 实测回到 **HTTP 200**，对照随机 SHA 仍 404）。⇒ 「force-push 只重置分支指针」这条**当场被再次验证**：删库重建才是彻底清除，力推送只是把指针挪开。<br>**结论**：不要以为 ① 的 404 是常态；只要还在 force-push，旧对象就会重新可取消。（2026-10-13 那次泄漏物只是一个随手编的公网 IP，与用户节点无关，风险评估后认为可接受。） |
-| 8 | **规则集走 CDN**，不用 `raw.githubusercontent.com`。CDN 前缀统一 `https://testingcf.jsdelivr.net/gh/`（也可用 `cdn.` / `fastly.` / `gcore.` 镜像） |
-| 9 | **广告规则集用 Jinx**，不用 `MetaCubeX` 的 `category-ads-all`。拦截集 = `jinx-ads` + `awanue-ads`；这两个**必须**先跟 `jinx-direct` 放行集，且顺序为 `jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn` |<br>**可选加固：DNS 层前置拦截**。`dns.rules` 里插两条（`jinx-direct` → `route` `dns-cn`、`jinx-ads`+`awanue-ads` → `predefined` `rcode: NXDOMAIN`），两条都必须排在 `geosite-cn` **之前**。**`dns.rules` 与 `route.rules` 是两份独立的顺序表**，改一处必须改另一处，否则静默失效（L28）。拦截动作只能用 `predefined`/`reject`，**写成 `route` 等于没拦**。**route 层规则不能删**：应用自带 DoH/DoT 只有 route 层拦得住。详见 `docs/evidence/2026-10-12-dns-layer-adblock-feasibility.md` 与 `docs/DECISIONS.md` D13 |
-| 10 | **旧版本配置只归档不删除**（`archive/<大版本>/`） |
-| 11 | **不在本机乱试**。本机有 OpenClash 网关，在本机跑 `sing-box run` 得到的连通性结论**一律不可信**（DNS 会被网关劫持，实测过：不含 fakeip 的最小配置也会被返回 `198.18.0.x`）。排查问题只允许三种手段：读配置、读官方文档、读 sing-box 源码。`sing-box check` 与 `audit.py --run` 只用来验「能不能启动」，**不准用来验「能不能上网」**。<br>**唯一例外（允许且推荐）**：用 `log.level = debug` 读 **sing-box 自己的日志**来判断「本机往出站递了什么」——`router: resolved [...]` 与 `outbound connection to <目标>` 是本机产生的记录，不受网关劫持影响（能据此区分「目标是 IP 字面量」还是「目标是域名」）。证据须存档到 `docs/evidence/` |
-| 12 | **tun + auto_route 必须写 `route.auto_detect_interface: true`**。不写 ⇒ `common/dialer/default.go` 不会挂 protect/绑定网卡 ⇒ 出站 socket 回灌 tun ⇒ 表现为「能启动但没网、节点全无延迟、只有上传没下载、连接数暴涨、内存飙升」。`audit.py` 有 `tun_without_auto_detect_interface` 门禁兜底 |
-| 13 | **日志里出现 `using outbound/selector[🚫 AD]: operation not permitted` 是正常的**，不是去广告组出错：`protocol/block/outbound.go` 就是用 `syscall.EPERM` 表示“拦住”，日志名取的是本连接选中的那层出站（AD selector → block）。**不要因此去“修”去广告组**（那会把广告放行）。嫌刷屏就 `log.level: "panic"`。反过来说：**去广告组的 `default` 必须始终是 `"block"`**，被改成 `direct` 会让所有广告静默放行 —— `audit.py` 有 `ad_group_default_not_block` 门禁兜底 |
-| 14 | **「只走 IPv4」必须端到端**。`dns.strategy: "ipv4_only"` 只管本地 DNS；目标域名默认是**原样交给代理服务端**的。必须在 `route.rules` 里加 `{"action": "resolve", "strategy": "ipv4_only"}`，**位置紧跟 `hijack-dns` 之后、排在所有 `route`/`reject`/`bypass` 之前**（放末尾等于没放 —— 首个 route/reject 命中即 `break match`，见 L18）。`route/conn.go:103-104` 见 `DestinationAddresses` 非空就走 `DialSerialNetwork`，目标变成 IPv4 字面量。`strategy` 不要省。`audit.py` 有 `resolve_not_ipv4_only` / `resolve_missing_ipv4_only` / `resolve_not_first` 门禁兜底 |
-| 15 | **出口 IP 的地址族不由客户端决定**。`resolve` 只能保证「本地 → 服务端」这一段是 IPv4 字面量（日志可证）；「服务端 → 目标站」那一段完全由服务端决定（NAT64、服务端 `sniff` 后自行重解析域名等）。⇒ 看到 IPv6 出口时**不要在本机配置里找原因、更不要为了它继续加固本地**，先确认该地址是不是节点本身的 AAAA 记录；要改就去服务端禁用 IPv6 出网。**已证实**：本地已全 IPv4 仍出现 VPS 自身 AAAA 出口；**未证实**：服务端为何在某些时段选 IPv6、禁用 IPv6 是否就能解决（属建议，未在真实 VPS 验证）。详见 `docs/evidence/2026-10-12-resolve-ipv4-vs-vps-egress.md` |
-| 16 | **上游新增功能必须显式写下「启用 / 不启用 / 必须跟随」**。上游发新版本时，除了「哪些字段要删」（`deprecated`/`removed`），还有「多了哪些新能力」——后者**没有默认答案**，不写就是隐式选择了“不启用”，理由往往是“没注意到”。⇒ 每个新功能在 `docs/version-matrix.json` 里建一条 `kind: "new"`（必填 `adopt` + `reason`，有字段可检测的还要 `expect`），并在 `docs/DECISIONS.md` 记下理由与备选方案。`audit.py` 有 `new_feature_without_adoption` / `new_feature_expect_invalid` / `new_feature_decision_overdue` / `new_feature_uncovered` / `decision_without_record` 门禁兜底 |
-| 17 | **改配置、改流程都先拉仓库、先看 diff**。走到新环境时先 `git clone`（或 `git pull`），在本地产出改动后：**先 `git diff` 给人看、得到同意、才 `commit` / `push`**。**不得直接覆盖已有文件** —— 历史上有过“把已更正过的文档又改回错误结论”的先例（L17 写反 → L18 推翻）。**克隆拿不到 `local/`**（已 `.gitignore`），真实节点只能由用户当场提供（铁律 7） |
-| 18 | **依据有优先级：官方文档 > 官方源码 > 本仓文档**。三条冲突时以官方为准，并**当场修本仓文档**，不要留「以本仓结论为准」的余地。① 官方 `docs/clients/{apple,android,desktop}/` 与 `docs/configuration/`（本仓快照见 `docs/upstream-*.md`）；② 内核源码 `protocol/tun/`、`route/` 与官方客户端源码 `sing-box-for-apple` / `sing-box-for-android`；③ 本仓 `docs/*.md`。**本仓的每一条经验结论都必须能追到 ①②**，追不到的不写（写成「未验证」而不是写成结论）。 |
-| 19 | **平台差异必须同时落三处，缺一就是静默失效**：① 改 `profiles/1.14/*-lazy.json`；② 在 `docs/PLATFORM-MATRIX.md` §4 表里加**一行**（第一列必须是 `` `JSON 路径` ``，单元格必须是 `` `JSON 字面量` `` 或 `**删除**` —— 说明文字写在表外）；③ 需要时在 `tools/audit.py` 加门禁。`matrix_platform_stale` 逐格对账、`profile_drift` 反向兜底（§4 未登记的差异一律 ERROR）。**平台的能力清单（§1/§1a/§2/§2a）无法机器核对**（没有可靠的官方机读源），只能人工按「来源」一栏复核 —— 别误以为它也上了锁。 |
-| 20 | **三个分流组的 tag 是不可随手改的契约**：规范名逐字是 `🚀 Proxy` / `🤖 AI` / `🚫 AD`（emoji + **一个 ASCII 空格** + 名字）。它们是 `route.final`、`route.rules[].outbound`、`dns.rules` 与规则集的引用目标，写错一个字符就等价于「tag 找不到」（`check` 不报，运行时报 `outbound not found` 或静默落到 `final`）；同时它们也是客户端策略组列表里的显示名，所以统一带 emoji 以便与节点 tag 区分。**改 tag 必须端到端改**：`profiles/1.14/*-lazy.json` + `templates/groups.json` + `docs/PLATFORM-MATRIX.md` §4（如登记了相关行）+ `AGENTS.md` / `README.md` / `docs/WORKFLOW.md` / `docs/PROTOCOL-MAPPING.md` / `nodes/nodes.example.json` + 仓库外 `local/` 下的运行配置；门禁 `group_tag_incomplete` / `template_group_tag_incomplete` 盯形态，`template_profile_group_missing` / `profile_group_not_in_template` 盯模板 ⟺ 配置一致。**引用面必须靠 grep 列，不能靠记忆**（L35 事故）：这个 tag 会出现的位置不止「组定义 + `route.rules`」，`dns.servers[].detour` 就是一个反直觉的落点 —— `grep -c '<tag>' ` 全仓 JSON 逐个确认为止；引用的完整性由 `dns_server_detour_missing` / `domain_resolver_missing` 兜住 |
-| 21 | **门禁的价值全在「判据与外部事实一致」，而这件事没人替你验**。`audit.py` 里有三类门禁，维护责任不同：<br>① **版本驱动型**（`deprecated`/`removed`/`kind=new`）—— 上游发新版时**自动跟着变**，因为判据取自 `docs/version-matrix.json` 的 `deprecated_in`/`removed_in`/`since`；<br>② **外部事实硬编码型**（平台能力判据、规则集顺序、平台差异矩阵 §4）—— **必须人工复核**，而且已有兜底：矩阵 §4 由 `matrix_platform_stale`/`profile_drift` 逐格对账，平台能力的权威源 `docs/clients/{apple,android}/features.md` 已纳入 `tools/upgrade-check.py` 的快照跟踪；<br>③ **本仓库结构性约定**（组 tag 形态、去广告组只留 `block`、目录用途）—— 与内核版本无关，只需维护本仓内部一致。<br>⚠️ **最危险的一种失效是「门禁还在、判据已经落空」**：矩阵的 `path` 若被上游改名或搬走，`find_paths` 永远返回空，那条门禁**静默失声**而全仓照样全绿（L39）。⇒ 所以有一条铁律：**凡是把外部事实写进代码/文档的地方，都要配一个探针或快照**；`audit_matrix_paths()`（按 `path` 造最小探针交给内核认）与 `audit_tools()`（工具自检）、`LEAK_SCAN_START_DATE` 的时区自检是同一思路 —— 不靠人记得，靠机器每次跑都问一遍 |
-| 22 | **读文件有预算：同一文件在一次任务里只整读一次**。第二次起一律 `grep -n <关键词> <文件>` 定位到行、只读那一段（`sed -n 'a,bp'` / `read` 的 offset-limit），并在回复里写明「已读过，本次只取第 N–M 行」。**同类整读到第 3 次必须停下**：在回复里列出「我还在找什么、已经排除什么」，不许再闷头翻。反例：2026-10-13 一次任务里把 `tools/audit.py` 整读 6 次以上、上游文档重复取样 4 轮，这是那次耗时失控的最大一笔（见 L45） |
-| 23 | **被否决的方案当场落盘，不靠记忆**。任何「考虑过但不做」的方案（含否决理由）在决定的那一刻追加一行到 `local/_wip.md`：`- <方案> → 否决：<理由>（<日期>）`。想重新提必须先读这个文件。**原因是压缩会把「我已经否决过它」先吃掉**——上下文被摘要后，我常常不是明知故犯，而是忘了自己已经犯过。反例：同一次任务里同一个机制先设计成 `role: coverage-baseline`、又改成 `self_describing`，两版都写了代码才推翻，最终定在 `policy.coverage_floor` |
-| 24 | **动编辑工具之前，回复里必须有一次「定稿」声明**。格式固定一行：`定稿：<改什么> → <落在哪些文件> → <验收命令>`。没有这一行不许调用 `edit` / `write` / `patch-text.py`。**这条约束的是格式，不是判断力** —— 它把「先想清楚」变成一条我能自检、也被你一眼看见的硬性动作。反例：L45 那次没定稿就开始改，返工两轮的成本远高于先问一句 |
-| 25 | **三振必须上报，不许自己继续**。同一类动作（读同一个文件 / 试同一个修法 / 改同一处代码）做到第 3 次，停下来向你报三件事：**卡在哪 / 已经试过什么 / 要你在哪两个选项里选**。阈值是数出来的，不是判断出来的。这条直接对应你「别搞一两个小时」的要求 |
-| 26 | **长任务按时报进度，不攒到最后**。用户说「多少分钟汇报一次」就按那个间隔报：每次只报三行 —— **已完成什么 / 正在做什么 / 有没有卡住**，不等到全部做完才开口。默认（未约定时）在单次任务超过 20 分钟时主动报一次 |
+| 22 | **读文件有预算**：同一文件一次任务只整读一次；第二次起 `grep -n` 定位 + 只读那一段。同类整读到第 3 次必须停下 |
+| 23 | **被否决的方案当场落盘**到 `local/_wip.md`，不靠记忆 |
+| 24 | **动编辑工具前必须先有一次「定稿」声明**：`定稿：<改什么> → <落在哪些文件> → <验收命令>` |
+| 25 | **三振必须上报**：同类动作第 3 次停下，报「卡在哪 / 试过什么 / 二选一」 |
+| 26 | **按时报进度**，一次三行（已完成 / 正在做 / 有没有卡住） |
 
-### 固定规则集清单（不要自行改动）
+> 💡 **为什么现在不那么痛了**：90 分钟那次，读文件占了成本大头 —— 因为「任务 A」要求先读
+> 6 万 token 的文档再手拼 JSON。现在走 `mknode.py`，**要读的只剩你自己写的这一份入口**。
+> 铁律 22 依然适用于维护仓库、调门禁这类"必须真读代码"的场合。
 
-| tag | 用途 | 格式 | 来源 | update_interval |
-|---|---|---|---|---|
-| `jinx-direct` | 白名单放行（47 条，包含被国内大厂 SDK 误拦的合法域名） | `source` | `RiverFlowsInUUU/Jinx@main/sing-box-direct.json` | `1d` |
-| `jinx-ads` | 广告拦截（3901 条） | `source` | `RiverFlowsInUUU/Jinx@main/sing-box-ads.json` | `1d` |
-| `awanue-ads` | 广告拦截补充（秋风规则，965 条） | `source` | `TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Singbox.json` | `1d` |
-| `geosite-private` | 局域网/私有域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
-| `geosite-ai` | AI 服务域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
-| `geosite-cn` | 中国大陆域名 | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
-| `geoip-cn` | 中国大陆 IP | `binary` | `MetaCubeX/meta-rules-dat@sing` | `7d` |
+---
 
-全部 URL 前缀统一 `https://testingcf.jsdelivr.net/gh/`，全部带 `"http_client": "ruleset-dl"`。
-
-**顺序铁律**（Jinx 官方要求，实测验证过为什么）：
+## 2. 走快车道就不用读的（需要时再查）
 
 ```
-jinx-direct     → outbound direct      ✅ 白名单放行，必须最先
-jinx-ads        → outbound 🚫 AD          🚫 拦截（去广告组出口只有 block）
-awanue-ads      → outbound 🚫 AD          🚫 拦截（必须排在 jinx-ads 之后）
-geosite-cn      → outbound direct      🚦 常规分流，必须在拦截之后
+docs/PROTOCOL-MAPPING.md   ← 只有在「手工拼 outbound」时才需要（约 2.9k token）
+docs/VERSION-MATRIX.md     ← 只有在「怀疑某个字段废弃了」时才需要
+docs/PLATFORM-MATRIX.md    ← 只有在「怀疑是平台差异」时才需要
+docs/LESSONS.md            ← 【查时读，不是开工必读】事故台账。先 grep 关键词，别整读（118KB）
+docs/DECISIONS.md          ← 【查时读】决策记录：新功能为何启用/不启用
+docs/WORKFLOW.md           ← 完整工作流与排障
+tools/                     ← 工具自己会告诉你用法：<tool> --help
 ```
 
-原因：国内广告域名多数同时也属「中国大陆域名」。`geosite-cn` 若排到拦截之前会先命中放行，广告规则再无机会执行。
-秋风（`awanue-ads`）与 Jinx 判定标准不同，**会拦掉 Jinx 白名单里的 8 个域**，所以必须排在 Jinx 之后，
-且前面要有 `jinx-direct` 兵底。
+> ⚠️ **`docs/LESSONS.md` 曾经被标为"开工先读"，那是个错误。** 它是 118KB 的事故卷宗 ——
+> 给**改规则的人**看的，不是给**改配置的人**看的。每次改配置都整读它，等于出门买菜先读完
+> 整个交警队的事故档案。它的正确用法是：**出错了再来 grep**（任务 C 的第 6 步）。
 
-## 2. 仓库结构
-
-```
-AGENTS.md                     ← 你在读的文件（AI 入口）
-README.md                     ← 人类入口
-singbox_version.txt           ← 当前正式版号 + 核查日期（唯一的版本真相）
-docs/
-  LESSONS.md                  ← 【开工先读】事故台账：现象 / 根因 / 为什么没拦住 / 修法 / 对应门禁
-  DECISIONS.md                ← 【开工先读】决策记录：新功能为何启用/不启用、备选方案、前提风险
-  WORKFLOW.md                 ← 完整工作流（升级流程 / 生成流程 / 校验流程 / 排障）
-  PROTOCOL-MAPPING.md         ← 【核心】分享链接 → outbound 字段映射表
-  VERSION-MATRIX.md           ← 逐版本废弃/移除字段总表（由 version-matrix.json 生成，勿手改）
-  version-matrix.json         ← 同上，机器可读（audit.py 的依据）
-  PLATFORM-MATRIX.md          ← Android / iOS / Windows 能力差异表
-  schema.json                 ← sing-box 官方 schema（字段白名单）
-  upstream-*.md               ← 上游 deprecated / migration / changelog / tun 快照
-  evidence/                   ← 事故证据存档（脱敏后入库；铁律 11 允许的 debug 日志证据）
-profiles/1.14/                ← 按内核大版本归档的可运行配置（占位节点）
-  desktop-lazy.json
-  android-lazy.json
-  ios-lazy.json
-templates/groups.json         ← 固定分流组骨架（🚀 Proxy / 🤖 AI / 🚫 AD / direct / block）
-nodes/nodes.example.json      ← 节点书写格式与分享链接对照示例
-tools/
-  audit.py                    ← 门禁：9 类配置风险 + 教训台账 / 决策记录 / 防泄漏 / 工具自检 / 模板文字 /
-                                平台矩阵对账（matrix_platform_stale / profile_drift）/ 模板覆盖对账 /
-                                新功能覆盖窗口对账（coverage_window_missing / coverage_inventory_missing /
-                                coverage_floor_stale / historical_feature_without_inventory）
-  diff_config.py              ← 两份配置的字段差异比对（铁律 0 的执行工具，跨平台）
-  upgrade-check.py            ← 上游有新正式版 / 新废弃项 / 未决策的新功能时报告差异
-  gen-docs.py                 ← 由 version-matrix.json 生成 VERSION-MATRIX.md（勿手改后者）
-archive/<大版本>/             ← 旧版本配置归档（只归档不删除）
-local/                        ← 【不提交】本机真实节点配置（.gitignore 已忽略）
-```
+---
 
 ## 3. 三种典型任务
 
-### 任务 A：用户给节点 → 出配置
+### 任务 A：用户给节点 → 出配置 ★ 最常用
 
+```bash
+python tools/mknode.py 'vless://...' --platform ios --group proxy
 ```
-1. cat singbox_version.txt                       # 确认目标正式版
-2. 读 docs/PROTOCOL-MAPPING.md 对应协议小节      # 拿到字段清单
-3. 读 profiles/<ver>/{platform}-lazy.json        # 拿骨架
-4. 按映射表把链接解成 outbound，插到出站列表
-   —— ⚠️ 若用户给了一份已有配置让你改，**先做字段差异比对**（见 §0.1 铁律 0）
-5. 把 outbound tag 加进用户指定的分流组的 outbounds 数组（组名见铁律 6）
-   —— 代理组与智能组**都是 urltest**，节点直接加进去就是加进自动测速（不再有单独的 `Auto` 组）；
-      智能组只放用户指定给 AI 的节点，**默认不要引用代理组**
-6. python tools/audit.py profiles/<ver>/<platform>-lazy.json --platform <p>
-7. 输出完整 JSON（不是 diff、不是片段）
 
-**产物落哪里**（关键）：
-- 只含占位节点的骨架 → `profiles/<ver>/<platform>-lazy.json`
-- **含真实节点的成品 → `local/<platform>.json`，绝不写进 `profiles/`，绝不提交**
-- 给用户的成品可以放在仓库外任意位置（例如 `android-lazy-test.json`）再发送
-```
+完事。**产物在 `local/ios.json`，门禁已经跑完，退出码 0 就可以交付。**
+
+想先看效果不写盘：加 `--dry-run`。
+用户给了**已有的配置**让你在他那份上改：见下面 §0.1。
 
 ### 任务 B：上游发布新正式版
 
-```
-1. python tools/upgrade-check.py                 # 看报告：1 版本比对 2 文档 diff 3 矩阵对账 4 升级风险 5 新功能清点
-2a. 【旧字段部分】按报告第 3/4 节改 docs/version-matrix.json（kind=deprecated/removed/…）
-2b. 【新功能部分】按报告第 5 节出「升级清单」，三栏分类：
-    · 必须跟随（旧写法被取代，必须删旧字段）—— 如 1.15 的 tun.stack
-    · 必须决策（新能力，启用/不启用由用户拍板）—— 如 MASQUE / Tailcat / auto_redirect
-    · 可放着（纯内部更新或与场景无关）—— 也要记一笔，否则下次会被当成漏项反复报警
-    ⚠️ 这三栏**必须逐条给用户看、等用户拍板**，不得自行决定（铁律 16）
-2c. 用户拍板后，写两个地方：矩阵 entries[] 加 kind="new" 条目（机器依据，
-    含 adopt / reason / since / decide_by / keywords）；
-    docs/DECISIONS.md 加 D<n> 条目（人的理由，含备选方案与前提风险）
-3. python tools/gen-docs.py                      # 重新生成 VERSION-MATRIX.md
-4. cp -r profiles/<旧ver> profiles/<新ver>，按报告逐项修正
-5. python tools/audit.py --version <新ver> profiles/<新ver>/*.json
-6. 更新 singbox_version.txt；确认无误后 upgrade-check.py --write 刷新文档快照
-```
+→ **完整流程在 `MAINTAINERS.md`**（这是改仓库规则，不是改配置，别在快车道上做）。
 
-> ⚠️ 流程 B 改流程本身时，四个文件必须同步（见 `docs/LESSONS.md` L22）：
-> `AGENTS.md`（本文）/ `README.md` / `docs/WORKFLOW.md` / `docs/DECISIONS.md`。
-
-### 需用户同意的六个动作（铁律 17 的具体清单）
-
-以下六件事**每次都必须先说、得到同意才做**，不在这六条内的可直接执行：
-
-| # | 动作 | 为什么需要同意 |
-|---|---|---|
-| 1 | `git commit` | 落盘即进入历史 |
-| 2 | `git push` | 一旦推到公开仓库就**收不回来**（2026-10-12 那次泄漏节点信息的提交就是靠 force-push 补的 —— 而 force-push 只重置分支指针，旧对象仍按 SHA 可取；最终是**删库重建**才彻底清掉） |
-| 3 | 改 `singbox_version.txt` | 这是“唯一版本真相”，改了等于宣布全仓库已对齐新版 |
-| 4 | 改矩阵里的 `adopt` | 等于替用户决定“用不用这个新功能” |
-| 5 | **删除任何现有字段** | 删错了就是真机没网（L4 教训：当年删了 `auto_detect_interface`） |
-| 6 | `upgrade-check.py --write` | 会把上游文档快照整体覆盖 —— **覆盖会丢掉本地手工标注**，先 diff |
+一行预览：`python tools/upgrade-check.py`
 
 ### 任务 C：用户反馈"跑不起来"
 
@@ -188,135 +149,75 @@ local/                        ← 【不提交】本机真实节点配置（.git
 2. FATAL unknown field  → 字段名写错或版本不支持 → 查 VERSION-MATRIX
 3. FATAL legacy/removed → 用了已移除字段 → 查 VERSION-MATRIX 的迁移写法
 4. 静默但功能不对      → 查 PLATFORM-MATRIX 平台能力
-5. **能启动但没网**     → 先查 `route.auto_detect_interface`（见下方分岔点），再查 DNS detour
-6. **先在 `docs/LESSONS.md` 里查有没有同类事故**，有就按那条的修法办
-7. 修完把新的教训追加成 `## L<n>` 条目，并确保对应门禁 code 已实现（否则 `audit_lessons()` 会拦）
+5. 能启动但没网        → 先查 route.auto_detect_interface，再查 DNS detour
+6. grep docs/LESSONS.md 找同类事故（关键词：现象里那个报错），有就按那条的修法办
+7. 修完把新教训追加成 ## L<n> 条目，并确保对应门禁 code 已实现（见 MAINTAINERS.md）
 ```
 
 **分岔点：错误是 check 阶段还是 run 阶段？**
 
 - `sing-box check -c` 就能报的 → 字段名/类型/枚举问题，直接查矩阵。
-- **`check` exit=0，但 `run` 启动即 FATAL** → 属于初始化期问题。已收录的典型：
+- **`check` exit=0，但 `run` 启动即 FATAL** → 初始化期问题。典型：
   `FATAL ... initialize rule-set[n]: ... detour to an empty direct outbound makes no sense`。
-  这是「下载用的 direct 出站是空的」。处理：给 `direct-download` 加
-  `domain_resolver`（或 `bind_interface` / `inet4_bind_address` / `routing_mark`）。
-  **`domain_strategy` 不算数**（已 `schema:"omit"`，1.14 上写了直接 FATAL —— L1 的由来）。
-  ⚠️ **`network_strategy` 不是例外，它是真字段**：`option/outbound.go` 里它是 `*NetworkStrategy`，**没有** `schema:"omit"`；实测 `network_strategy: "default"` 就能让“空 direct”判定为非空（能拿去当下载出站）。本仓库不用它，只因图形客户端兼容性存疑，不是因为它无效。
-- 修完必须跑 `python tools/audit.py --run --run-seconds 20` 复现一次，确认不再有 `FATAL`；
-  静态检查 + `check` + `run` 三层都过才算修完。
 
-**第三层陷阱：`check` 过了、`run` 也活着，手机上仍然没网。**
+### §0.1 给用户的**已有配置**改东西时
 
-已收录的典型症状：**能启动、但节点全部没有延迟、只有上传流量没有下载流量、连接数上万、内存飙到 1GB**。
+不管改多小，**必做字段差异比对**：
 
-根因是配置里缺 `route.auto_detect_interface: true`。机制（源码 `common/dialer/default.go`）：
-
-```
-if defaultOptions.BindInterface != "" && !disableDefaultBind { ... }
-else if networkManager.AutoDetectInterface() && !disableDefaultBind {
-    // Android 图形客户端走这一支
-    bindFunc := networkManager.ProtectFunc()   // → VpnService.protect(fd)
-    dialer.Control = control.Append(dialer.Control, bindFunc)
-    listener.Control = control.Append(listener.Control, bindFunc)
-}
+```bash
+python tools/diff_config.py 用户原始配置.json 我改完的配置.json
 ```
 
-没写这个字段 ⇒ 整个 `else if` 不成立 ⇒ 出站 socket **一个 Control 都不挂** ⇒ Android VpnService
-把自己 App 的流量也抓进隧道（`Settings.allowBypass` 默认 false）⇒ 出站回灌 tun ⇒
-节点测速全部失败（→ 全无延迟）、流量只进不出（→ 只有上传）、urltest 3 分钟一轮反复重试（→ 连接数与内存暴涨）。
+输出三段：`只在原始配置里（可能被我删了）` / `只在生成配置里（可能是我加的）` / `两边都有但值变了`。
+**每一个差异都必须能说出为什么**；说不出原因的，按原始配置保留。
 
-官方原文（`docs/configuration/inbound/tun.md`）：
-> To avoid traffic loopback, set `route.auto_detect_interface` or `route.default_interface` or `outbound.bind_interface`
+这条是拿真实事故换来的（L4）：当年凭印象重写模板，把用户配置里本来就有的
+`auto_detect_interface: true` 删了，直接导致真机没网。
 
-Android 上后两者都不可用（VpnService 托管环境没有可用网卡名），**唯一可行的是 `auto_detect_interface`**。
-官方 `docs/manual/proxy/client.md` 的三份客户端示例也都写了 `"auto_detect_interface": true`。
+> `mknode.py` 是由骨架**重建**，不读用户原配置 —— 所以用户给的是自己那份时，
+> 你要么用 `diff_config.py` 复核，要么明确告诉用户"这是按骨架重建的，不是在你那份上改的"。
 
-注意：`sing-box check` 对这个问题**完全静默**（`check` 只反序列化），所以只能靠 `audit.py` 的静态门禁兜住。
+### 需用户同意的六个动作（铁律 17 的具体清单）
+
+以下六件事**每次都必须先说、得到同意才做**，不在这六条内的可直接执行：
+
+| # | 动作 | 为什么需要同意 |
+|---|---|---|
+| 1 | `git commit` | 落盘即进入历史 |
+| 2 | `git push` | 推到公开仓库就**收不回来**（2026-10-12 那次泄漏节点信息的提交，最终是**删库重建**才彻底清掉） |
+| 3 | 改 `singbox_version.txt` | 它是"唯一版本真相"，改了等于宣布全仓库对齐新版 |
+| 4 | 改矩阵里的 `adopt` | 等于替用户决定"用不用这个新功能" |
+| 5 | **删除任何现有字段** | 删错了就是真机没网（L4） |
+| 6 | `upgrade-check.py --write` | 会整体覆盖上游文档快照 —— **覆盖会丢掉本地手工标注**，先 diff |
+
+---
 
 ## 4. 校验命令
 
+日常只需要第一条（`mknode.py` 已经替你跑了）：
+
 ```bash
-# 九项门禁（结构 / 废弃字段 / 平台能力 / 引用完整性 / 防回灌 / 广告拦截语义（route 层 + DNS 层）/ IPv4-only 端到端 / 新功能采纳）
-#   + 仓库级对账（平台差异矩阵 §4 ⟺ 三份 profile；templates/groups.json ⟺ 三份 profile 的分流组）
-#   + 新功能覆盖窗口对账（coverage_window_missing / coverage_inventory_missing / coverage_floor_stale /
-#     historical_feature_without_inventory / inventory_doc_missing / inventory_doc_unlinked / follow_up_invalid）：
-#     拦的是「上游加了新功能而仓库不知道」—— 注意 ver_ge(ver, floor) 的语义是「>=」，
-#     所以低于窗口起点的版本不是「检查过」，而是「从来没进过检查」（L43）
-#   + 教训台账一致性 + 决策记录双向校验 + 防泄漏扫查（含 commit message）+ 工具自检 + sing-box check
-# audit.py 自己找 sing-box（ROOT/bin/ 或 PATH）；也认环境变量 SINGBOX_BIN
-#   ⚠️ 本机没有 bin/ 也没装进 PATH 时，--run 会**静默降级**为 INFO 跳过（看起来照样 PASS）。
-#   要真跑就把本机路径放进环境变量（仓库里不许写本机绝对路径，铁律 7）：
-#   export SINGBOX_BIN="C:/path/to/sing-box.exe"
-# 每次跑都会先校验 docs/LESSONS.md 的 `**门禁**：` 声明与代码里的 rep.error/rep.warn/rep.info code 双向对得上，
-# 并校验 docs/DECISIONS.md 与矩阵里 kind=new 条目双向对得上
-# 并逐个 compile tools/*.py + 对 diff_config.compare / DIRECT_NON_EMPTY_KEYS 做不变量自检
-#   （门禁自己不被人查，L25：静默失效比报错危险）
-# 并验「矩阵的 path 在锁定内核上还找得到」（matrix_path_unreachable）：
-# 上游把字段改名/搬走时，find_paths 永远返回空、那条门禁会**静默失声**，
-# 而配置侧的门禁全部照旧全绿 —— 只有矩阵与内核交叉比对才发现（L39）
-# 并校验 docs/PLATFORM-MATRIX.md §4 表与三份 profile 的实际值逐格一致（matrix_platform_stale），
-# 以及三份 profile 的分流组与 templates/groups.json 一致（template_profile_group_missing 等）；
-# 反向由 profile_drift / profile_group_not_in_template 兜底 —— §4 未登记的差异、模板未登记的组，
-# 都会报 ERROR（铁律 19）
-python tools/audit.py profiles/1.14/ios-lazy.json --platform ios
-python tools/audit.py --singbox "C:/path/to/sing-box.exe" --version 1.14.3
-
-# 只跑 sing-box 官方 check
-sing-box check -c profiles/1.14/ios-lazy.json
-
-# ★ 交付 / 排错前必跑：真启动一次，抓 check 看不见的启动期 FATAL
-#   （会自动把 tun 入站临时换成 mixed、cache_file 指到临时目录；会真的连网拉规则集）
-#   ⚠️ 必须先 git add -A 再跑 —— CI 是 checkout 之后跑的，而防泄漏扫查要看文件名单，
-#      不先 add 就会「本地绿、CI 红」（L29 / D14）
-git add -A && bash tools/check-all.sh --run        # 推荐：上面几件事串成一条命令
-#   ↑ 静态门禁 + 负向回归（25 用例）+ 启动级验证 + 逐份 sing-box check；任一步失败都会点名
-#   本机没有 bin/ 也没进 PATH 时，把路径写进 local/.singbox-bin（不提交，见铁律 7）
-
-# 上游巡检 / 重新生成人读版矩阵
-python tools/upgrade-check.py
-python tools/gen-docs.py
+python tools/audit.py local/ios.json --platform ios     # 单个产物
+bash tools/check-all.sh                                 # 全仓静态门禁 + 负向回归 + 逐份 check（秒级）
+bash tools/check-all.sh --run                           # ★ 交付/排错前必跑，加启动级验证（约 1 分钟）
+python tools/audit.py --version 1.15.0 profiles/1.14/ios-lazy.json   # 预演升级会怎样
 ```
 
-> **铁律：`sing-box check` 只反序列化、不初始化。**
-> “check 全绿”**不等于**“能启动”。空的 direct 出站、规则集下不下来、
-> 初始化期的引用问题，check 一律 exit=0。交付前至少跑一次 `--run`。
+**关于 sing-box 可执行文件**：`audit.py` 自己找（`bin/` → PATH → `local/.singbox-bin`），
+也认环境变量 `SINGBOX_BIN`。
 
-`audit.py` 退出码：`0` 全通过，`1` 有 ERROR（禁止交付）。
-WARN 可以交付，但必须在回复里向用户说明。
+> ⚠️ 本机没有内核时，`check`/`run` 会**静默降级**为 INFO 跳过 —— 看起来照样 PASS。
+> 要真跑就把路径写进 `local/.singbox-bin`（不提交，铁律 7）。
 
-**教训台账一致性**（`audit_lessons()`，每次跑都执行，不需要额外参数）：
-- 方向一：`docs/LESSONS.md` 里 `**门禁**：` 声明的每个 code 必须在 `tools/audit.py` 源码里真实存在（`rep.error` / `rep.warn` / `rep.info` 都算），
-  否则报 ERROR `lessons_missing_gate`（防止“文档声称有防护、代码里根本没实现”）。
-- 方向二：`tools/audit.py` 里每个非框架 code 必须在 `docs/*.md` / `AGENTS.md` / `README.md` 里出现过，
-  否则报 ERROR `gate_without_lesson`（防止新门禁无人知道拦的是什么）。
-- 框架性白名单（不要求有教训条目）：`json`, `no_singbox`, `skip_check_template`, `run_skipped`, `singbox_check`, `singbox_run`, `singbox_run_tun`, `singbox_timeout`。
-- 另有 `lesson_missing_gate_line`：每条教训正文里必须有 `**门禁**：` 行（没有门禁就写「无」）——否则台账的机读格式只是口号。
+**退出码**：`0` 全通过；`1` 有 ERROR（**禁止交付**）。WARN 可以交付，但要在回复里向用户说明。
 
-**DNS 层广告拦截**（`_audit_dns_adblock()`，跟随 `audit_repo_rules()` 执行）：
-- `dns.rules` 引用 `jinx-ads` / `awanue-ads` 时：必须有 `jinx-direct` 白名单配套（`dns_ad_without_whitelist`）；
-  白名单必须是 `route`、拦截集必须是 `predefined`/`reject` 且不得 `route` 到某个 server（`dns_ad_target`）；
-  顺序必须为 白名单 → 拦截 → `geosite-cn`（`dns_ad_order`）。
-- 动机：两张顺序表各写各的，排错两个方向**都静默**（L28）。
+`--run` **必须先 `git add -A`** —— 防泄漏扫查看文件名单，不先 add 会「本地绿、CI 红」（L29）。
+用 `check-all.sh` 就没这个坑：它把上面几件事串成一条命令，任一步失败都会点名。
 
-**模板文字检查**（`audit_template_text()`，每次跑都执行）：
-- `templates/groups.json` 的 `_rules_of_thumb` 是全文唯一**无人消费**的部分（没有工具读它），因此最容易过期。
-- 出现「`resolve` + 末尾」这类已被推翻的口径 → ERROR `template_thumb_stale`；
-  且必须保留一条同时提到 `resolve` 与 `hijack-dns` 的条目。
+> **`sing-box check` 只反序列化、不初始化。** "check 全绿"**不等于**"能启动"：
+> 空的 direct 出站、规则集下不下来、初始化期的引用问题，check 一律 exit=0。
 
-**防泄漏扫查**（`audit_redaction()`，每次跑都执行）：
-- 范围 = `git ls-files` 的全部被跟踪文件 + **commit message**（后者只扫 `tools/audit.py` 的 `LEAK_SCAN_START_DATE` 之后）。
-- 命中即 ERROR `sensitive_ip_in_repo`；全净则 INFO `redaction_clean`。
-- 追溯起点用**时间**而不是「已泄漏 SHA 黑名单」：黑名单要拦住某个 SHA 就必须把该 SHA 明文写进仓库，等于二次泄漏，且递归无解（L24）。
-
-**工具自检**（`audit_tools()`，每次跑都执行）：
-- 逐个 `compile()` `tools/*.py` → ERROR `tool_syntax_error`（语法错自己也是错）。
-- `tools/diff_config.py` 的 `compare()` 三组不变量测试 + `DIRECT_NON_EMPTY_KEYS` 语义断言 → ERROR `tool_selftest_failed`。
-- 动机：门禁只审配置、不审自己，**静默失效比报错危险**（L25）。
-
-> 注意：`ads_block_log_noise` 故意做成 **INFO** 而不是 WARN —— 它描述的是“正常现象”，若做成 WARN 则每次自检都不干净，反而让人麻木。
-
-`--version` 用来**预演**「假设客户端升级到这个版本会怎样」，例如
-`python tools/audit.py --version 1.15.0 profiles/1.14/ios-lazy.json` 会提前告诉你要删 `stack`。
+---
 
 ## 5. 交付给用户时的固定话术
 
@@ -330,11 +231,20 @@ WARN 可以交付，但必须在回复里向用户说明。
 
 不得声称"已实测联网可用"——除非用户在本机真跑了 `sing-box run`。
 
+---
+
 ## 6. 节点占位规则
 
-- `profiles/` 里的文件**永远是占位值**（`node-0X.example.com`），它只是骨架与格式参考。
-- 用户给了真实分享链接后，**替换占位、不要新增重复节点**，产物写进 `local/<platform>.json`。
-- `local/` 已列入 `.gitignore`；提交前用 `git status` 复核，并可用
+- `profiles/` 里的文件**永远是占位值**（`node-0X.example.com`），只是骨架与格式参考。
+- 用户给了真实链接后，产物写进 **`local/<platform>.json`**（`mknode.py` 默认就这么干）。
+- 提交前用 `git status` 复核，并可用
   `git grep -n -f <(printf '%s\n' "$真实域名")` 之类方式确认没有真实节点混进暂存区。
-- 判断标准很简单：`python tools/audit.py` 对 `profiles/` 下任何文件报
-  `placeholder_server` 就是错误，必须把真实节点挪出 `profiles/`。
+- 判断标准很简单：`python tools/audit.py` 对 `profiles/` 下任何文件报 `placeholder_server`
+  —— 错误，必须把真实节点挪出 `profiles/`。
+
+---
+
+## 7. 维护者请看 `MAINTAINERS.md`
+
+改**规则本身**（升级内核、加门禁、改矩阵、加教训、改组 tag）的完整流程在那里。
+本文件只负责一件事：**让改配置这件事快、且不会错。**
