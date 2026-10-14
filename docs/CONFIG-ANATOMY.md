@@ -33,7 +33,7 @@ $schema · log · dns · inbounds · outbounds · route · http_clients · exper
 |---|---|---|---|
 | 0–4 | `Node-01` … `Node-05` | vless / vmess / trojan / hysteria2 / shadowsocks | **占位节点**（`node-0X.example.com`），待替换 |
 | 5 | `🚀 Proxy` | **urltest** | 默认出口。加入即可，自动测速 |
-| 6 | `🤖 AI` | **urltest** | 智能组：AI 类站点专属优选，与代理组**独立** |
+| 6 | `🤖 AI` | **selector** | 智能组：**手动切节点，不自动优选**。`default` 指向占位节点（模板不需运行）。urltest 仅在用户当场要求时启用（见 D25） |
 | 7 | `🚫 AD` | **selector** | `outbounds` 恒为 `["block"]`，`default` 恒为 `"block"` |
 | 8 | `direct` | direct | 直连（非空，带 `domain_resolver`） |
 | 9 | `direct-download` | direct | 规则集下载专用 |

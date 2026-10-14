@@ -113,8 +113,16 @@ def m_cache_path_parent(cfg):
 
 
 def m_ad_no_url(cfg):
-    """urltest 组丢了 url。"""
-    _by_tag(cfg, "🤖 AI").pop("url", None)
+    """selector 组丢了 default。
+
+    ⚠️ 本用例原名 `ad-no-url`、改的是 `🤖 AI` 组的 `url` —— 那是 AI 还是 urltest 时写的
+    （urltest 必须有 url）。2026-10-14 AI 改为 **selector 优先** 后，
+    AI 组已不含 `url` 字段，`pop("url")` 删不到东西 ⇒ 门禁不响、用例假失败。
+    ⇒ 改成测 selector 的真实约束：**缺 default**（`template_ai_no_default`）。
+
+    「urltest 缺 url」这条约束本身仍有 `urltest-no-url-a` 用 `🚀 Proxy` 覆盖着（Proxy 仍是 urltest）。
+    """
+    _by_tag(cfg, "🤖 AI").pop("default", None)
 
 
 def m_dns_ad_without_whitelist(cfg):
@@ -294,7 +302,10 @@ CASES = [
     ("final-missing",             m_final_missing,             "final_missing",                  "ERROR", "single"),
     ("cache-path-absolute",       m_cache_path_absolute,       "cache_path_abs",                "WARN",  "single"),
     ("cache-path-parent",         m_cache_path_parent,         "cache_path_parent",              "ERROR", "single"),
-    ("ad-no-url",                 m_ad_no_url,                 "urltest_no_url",                 "ERROR", "single"),
+    # ⚠️ 作用域必须是 `repo`（跑整仓）而不是 `single`：
+    # `template_ai_no_default` 在 `audit_template()` 里，**只对 templates/groups.json 生效**，
+    # 单文件 profile 用例根本走不到那个函数 —— 写成 single 会假失败。
+    ("ai-selector-no-default",    m_ad_no_url,                 "template_ai_no_default",         "ERROR", "tpl"),
     # ⚠️ 这个用例**故意不碰配置**，去改矩阵——因为它模拟的是「上游把字段改名」：
     # 此后 find_paths 永远返回空、那条门禁静默失声，而配置侧门禁全部照旧全绿。
     # 这是唯一一类「改配置根本触发不了」的失效（L39），所以作用域是 matrix。
@@ -487,6 +498,31 @@ MATRIX_MUTATIONS = {
 }
 
 
+def run_case_tpl(name, mutate, base_text, level):
+    """临时改**真实模板** `templates/groups.json`，跑整仓审计，再立即还原。
+
+    为什么需要独立作用域：`audit_template()` **只在整仓模式下、且只对模板文件**执行
+    （见 audit.py 的 `if is_template: audit_template(rep)`）。
+    profile 作用域（`single` / `repo`）都走不到它 —— 写成那两个会**假失败**。
+
+    ⚠️ 写盘必须带 `newline=""` 保住 LF：用默认 newline 会在 Windows 写 CRLF，
+    触发 `edit_method_fingerprint`，输出被无关 ERROR 刷屏，让人误判「门禁没响」。
+    （2026-10-14 踩过：我为此白查了三轮。）
+    """
+    T = ROOT / "templates" / "groups.json"
+    original = T.read_bytes()
+    cfg = copy.deepcopy(json.loads(base_text))
+    mutate(cfg)
+    try:
+        T.write_text(json.dumps(cfg, ensure_ascii=False, indent=4) + "\n",
+                     encoding="utf-8", newline="")
+        return _audit_codes(None, level)
+    finally:
+        T.write_bytes(original)
+        if T.read_bytes() != original:
+            raise RuntimeError("❗ 还原 templates/groups.json 失败——请手工 git checkout 恢复")
+
+
 def run_case_matrix(name, mutate, base_text, level):
     """临时改**真实**矩阵，跑整仓审计，再立即还原（同 run_case_repo 的纪律）。
 
@@ -558,7 +594,9 @@ def main():
         for name, mutate, expect, level, scope in cases:
             try:
                 _assert_config_only_safe(name, expect, scope)
-                if scope == "matrix":
+                if scope == "tpl":
+                    codes = run_case_tpl(name, mutate, base_text, level)
+                elif scope == "matrix":
                     codes = run_case_matrix(name, mutate, base_text, level)
                 elif scope == "repo":
                     codes = run_case_repo(name, mutate, base_text, level)

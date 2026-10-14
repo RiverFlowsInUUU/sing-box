@@ -326,7 +326,7 @@ tag 一直是 `dns-bootstrap` / `dns-cn` / `dns-proxy`，**该门禁永远不可
   因此写错一个字符就等价于「tag 找不到」（`check` 不报，运行时才报 `outbound not found`
   或静默落到 `final`）；同时它也是客户端策略组列表里给用户看的显示名。
 
-**门禁**：`dup_tag`, `empty_group`, `empty_group_skeleton`, `urltest_no_url`, `final_missing`, `dangling_ref`, `group_wrong_type`, `group_nesting`, `group_tag_incomplete`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `ad_group_default_not_block`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_group_tag_incomplete`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_not_urltest`, `template_ai_no_url`, `template_ad_polluted`, `template_ad_default_not_block`
+**门禁**：`dup_tag`, `empty_group`, `empty_group_skeleton`, `urltest_no_url`, `final_missing`, `dangling_ref`, `group_wrong_type`, `group_nesting`, `group_tag_incomplete`, `rule_outbound_missing`, `rule_ruleset_missing`, `ad_group_polluted`, `ad_group_default_not_block`, `template_missing`, `template_json`, `template_group_missing`, `template_legacy_auto`, `template_group_tag_incomplete`, `template_proxy_not_urltest`, `template_proxy_no_url`, `template_ai_wrong_type`, `template_ai_no_url`, `template_ai_no_default`, `template_ad_polluted`, `template_ad_default_not_block`
 
 ---
 

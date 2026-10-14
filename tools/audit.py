@@ -743,12 +743,14 @@ def audit_repo_rules(cfg, rep: Report, is_template: bool = False):
     for i, o in enumerate(outs):
         if not isinstance(o, dict):
             continue
-        want = GROUP_TYPES_REQUIRED.get(o.get("tag"))
-        if want and o.get("type") != want:
+        allowed = GROUP_TYPES_ALLOWED.get(o.get("tag"))
+        if allowed and o.get("type") not in allowed:
             rep.error(
                 "group_wrong_type",
-                f"outbounds[{i}] ({o.get('tag')}) 必须是 {want}（当前 {o.get('type')}）："
-                f"{GROUP_PROXY} 与 {GROUP_AI} 是两个独立优选组、各自 urltest；{GROUP_AD} 是 selector",
+                f"outbounds[{i}] ({o.get('tag')}) 的类型是 {o.get('type')!r}，"
+                f"但只允许 {list(allowed)}（首选 {GROUP_TYPES_PREFERRED.get(o.get('tag'))}）："
+                f"{GROUP_PROXY} 是 urltest；{GROUP_AI} **默认 selector**、urltest 需用户当场要求；"
+                f"{GROUP_AD} 是 selector",
             )
         if o.get("tag") not in NO_NESTING_GROUPS:
             continue
@@ -1051,8 +1053,30 @@ GROUP_AD = "🚫 AD"
 GROUP_TAGS = (GROUP_PROXY, GROUP_AI, GROUP_AD)
 # 组的 outbounds 里只允许出现真实节点，不允许嵌套组（urltest 套 urltest 会串联两次测速）
 NO_NESTING_GROUPS = GROUP_TAGS
-# 固定组的类型不允许被改（m02132：智能组与代理组一样是 urltest，不再是指向代理组的 selector）
-GROUP_TYPES_REQUIRED = {GROUP_PROXY: "urltest", GROUP_AI: "urltest", GROUP_AD: "selector"}
+# 固定组允许的类型（**集合**，不是单值）。
+#
+# `🤖 AI` 由 urltest 改为 **selector 优先**（2026-10-14 用户要求）：
+#   · 默认 selector —— 用户手动切节点，不自动优选；
+#   · urltest 仍**允许** —— 用户当面提要求时可以临时启用（无落盘凭证，
+#     因为实际流程是「每次克隆仓库 → 用户丢节点 → 生成配置」，
+#     需求由用户在对话里提；不说不改）。
+#
+# ⚠️ 原实现是单值 `{GROUP_AI: "urltest"}`，且注释写着 m02132（用户当年的要求）。
+#    这次是**推翻旧决定**，所以改的是「允许集合」而不是「换一个单值」——
+#    这样两边写法都不会静默通过，也不会把旧配置一刀切死。
+GROUP_TYPES_ALLOWED = {
+    GROUP_PROXY: ("urltest",),
+    GROUP_AI: ("selector", "urltest"),   # selector 优先；urltest 需用户当场提出
+    GROUP_AD: ("selector",),
+}
+# 默认（也是首选）类型 —— 生成新配置时用这个
+GROUP_TYPES_PREFERRED = {
+    GROUP_PROXY: "urltest",
+    GROUP_AI: "selector",
+    GROUP_AD: "selector",
+}
+# ⚠️ 兼容旧名：本文件里别处若还引用 GROUP_TYPES_REQUIRED，统一指到"首选"表
+GROUP_TYPES_REQUIRED = GROUP_TYPES_PREFERRED
 # 去广告组只允许一个出口（m07194）：block。direct 曾被放在这里作为「放行」档，
 # 但它会让 AD 组变成一个用户看不出差别的开关，且任何误选都会让广告静默直连。
 GROUP_AD_OUTBOUNDS = ("block",)
@@ -1399,13 +1423,22 @@ def audit_template(rep: Report):
     if proxy and not proxy.get("url"):
         rep.error("template_proxy_no_url", f"{GROUP_PROXY} (urltest) 必须有 url，否则节点测速无意义")
     ai = by_tag.get(GROUP_AI)
-    if ai and ai.get("type") != "urltest":
+    if ai and ai.get("type") not in GROUP_TYPES_ALLOWED[GROUP_AI]:
         rep.error(
-            "template_ai_not_urltest",
-            f"{GROUP_AI} 必须是 urltest（当前 {ai.get('type')}）——它与 {GROUP_PROXY} 是两个独立的优选组",
+            "template_ai_wrong_type",
+            f"{GROUP_AI} 的类型是 {ai.get('type')!r}，但只允许 "
+            f"{list(GROUP_TYPES_ALLOWED[GROUP_AI])}（**默认 selector**）——"
+            f"urltest 仅当用户当场提出要求时使用",
         )
-    if ai and not ai.get("url"):
-        rep.error("template_ai_no_url", f"{GROUP_AI} (urltest) 必须有 url，否则节点测速无意义")
+    # url 只在 urltest 形态下必须存在（selector 不认 url，写了反而 FATAL）
+    if ai and ai.get("type") == "urltest" and not ai.get("url"):
+        rep.error("template_ai_no_url",
+                  f"{GROUP_AI} 用 urltest 时必须有 url，否则节点测速无意义")
+    # selector 形态必须写 default（sing-box 要求；缺了它选择器不知道该选谁）
+    if ai and ai.get("type") == "selector" and not ai.get("default"):
+        rep.error("template_ai_no_default",
+                  f"{GROUP_AI} 用 selector 时必须有 default（占位节点亦可）——"
+                  "缺了它选择器没有初始选中项")
     ad = by_tag.get(GROUP_AD)
     if ad and set(ad.get("outbounds") or []) - set(GROUP_AD_OUTBOUNDS):
         rep.error(

@@ -185,7 +185,7 @@
       "tolerance": 100
     },
     {
-      "type": "urltest",
+      "type": "selector",
       "tag": "🤖 AI",
       "outbounds": [
         "Node-01",
@@ -194,9 +194,7 @@
         "Node-04",
         "Node-05"
       ],
-      "url": "http://www.gstatic.com/generate_204",
-      "interval": "3m",
-      "tolerance": 100
+      "default": "Node-01"
     },
     {
       "type": "selector",

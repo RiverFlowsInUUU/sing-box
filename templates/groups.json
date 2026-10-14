@@ -1,55 +1,53 @@
 {
-  "_comment": "固定分流组骨架。这些出站必须原样存在于每个 profile 里；只往它们的 outbounds 数组里加节点 tag，不要改语义。",
-  "outbounds": [
-    {
-      "type": "urltest",
-      "tag": "🚀 Proxy",
-      "outbounds": [],
-      "url": "http://www.gstatic.com/generate_204",
-      "interval": "3m",
-      "tolerance": 100
-    },
-    {
-      "type": "urltest",
-      "tag": "🤖 AI",
-      "outbounds": [],
-      "url": "http://www.gstatic.com/generate_204",
-      "interval": "3m",
-      "tolerance": 100
-    },
-    {
-      "type": "selector",
-      "tag": "🚫 AD",
-      "outbounds": [
-        "block"
-      ],
-      "default": "block"
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
-    },
-    {
-      "type": "direct",
-      "tag": "direct-download",
-      "domain_resolver": {
-        "server": "dns-bootstrap"
-      }
-    }
-  ],
-  "_rules_of_thumb": [
-    "🚀 Proxy 本身就是 urltest，里面放所有代理节点；它是 route.final 的默认出口，也是全局兜底。不再有单独的 Auto 组。",
-    "🤖 AI 也是 urltest（只放 AI 要用的节点，例如全部台湾节点），与代理组各自独立测速；不引用代理组，避免与代理组完全同源。",
-    "组内不要嵌套组（urltest / selector 的 outbounds 里只放真实节点），避免串联造成的延迟与状态耦合。",
-    "🚫 AD 的 outbounds 永远只有 block，没有 direct（tools/audit.py 会检查）",
-    "tag 名 🚀 Proxy / 🤖 AI / 🚫 AD / direct / block 是保留名，节点不得占用（🚀 Proxy 现在是 urltest 组，节点更不能占用）",
-    "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense",
-    "route 里必须写 auto_detect_interface: true（tun + auto_route 场景下不写会导致出站 socket 不被 protect，流量回灌 tun，表现为节点全无延迟/只有上传没下载/内存暴涨）",
-    "IPv4-only 必须端到端：dns.strategy 只管本地 DNS，route.rules 里必须有 {\"action\": \"resolve\", \"strategy\": \"ipv4_only\"}，且位置必须紧跟 hijack-dns、排在第一个 route/reject/bypass 之前（放末尾等于没放——命中 route/reject 就 break match，resolve 根本不会跑；详见 docs/LESSONS.md L18）",
-    "可选加固：广告拦截前置到 DNS 层 —— dns.rules 里插两条，{\"rule_set\":[\"jinx-direct\"],\"action\":\"route\",\"server\":\"dns-cn\"} 必须在 {\"rule_set\":[\"jinx-ads\",\"awanue-ads\"],\"action\":\"predefined\",\"rcode\":\"NXDOMAIN\"} 之前，两条都必须排在 geosite-cn 之前；拦截动作只能 predefined/reject，写成 route 等于没拦。dns.rules 与 route.rules 是两份独立的顺序表，改一处必须改另一处（docs/LESSONS.md L28）"
-  ]
+    "_comment": "固定分流组骨架。这些出站必须原样存在于每个 profile 里；只往它们的 outbounds 数组里加节点 tag，不要改语义。",
+    "outbounds": [
+        {
+            "type": "urltest",
+            "tag": "🚀 Proxy",
+            "outbounds": [],
+            "url": "http://www.gstatic.com/generate_204",
+            "interval": "3m",
+            "tolerance": 100
+        },
+        {
+            "type": "selector",
+            "tag": "🤖 AI",
+            "outbounds": [],
+            "default": "Node-01"
+        },
+        {
+            "type": "selector",
+            "tag": "🚫 AD",
+            "outbounds": [
+                "block"
+            ],
+            "default": "block"
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        },
+        {
+            "type": "block",
+            "tag": "block"
+        },
+        {
+            "type": "direct",
+            "tag": "direct-download",
+            "domain_resolver": {
+                "server": "dns-bootstrap"
+            }
+        }
+    ],
+    "_rules_of_thumb": [
+        "🚀 Proxy 本身就是 urltest，里面放所有代理节点；它是 route.final 的默认出口，也是全局兜底。不再有单独的 Auto 组。",
+        "🤖 AI 也是 urltest（只放 AI 要用的节点，例如全部台湾节点），与代理组各自独立测速；不引用代理组，避免与代理组完全同源。",
+        "组内不要嵌套组（urltest / selector 的 outbounds 里只放真实节点），避免串联造成的延迟与状态耦合。",
+        "🚫 AD 的 outbounds 永远只有 block，没有 direct（tools/audit.py 会检查）",
+        "tag 名 🚀 Proxy / 🤖 AI / 🚫 AD / direct / block 是保留名，节点不得占用（🚀 Proxy 现在是 urltest 组，节点更不能占用）",
+        "direct-download 是给规则集下载用的 direct 出站，必须带 domain_resolver（或 bind_interface 等），否则是「空 direct」，规则集下载会 FATAL: detour to an empty direct outbound makes no sense",
+        "route 里必须写 auto_detect_interface: true（tun + auto_route 场景下不写会导致出站 socket 不被 protect，流量回灌 tun，表现为节点全无延迟/只有上传没下载/内存暴涨）",
+        "IPv4-only 必须端到端：dns.strategy 只管本地 DNS，route.rules 里必须有 {\"action\": \"resolve\", \"strategy\": \"ipv4_only\"}，且位置必须紧跟 hijack-dns、排在第一个 route/reject/bypass 之前（放末尾等于没放——命中 route/reject 就 break match，resolve 根本不会跑；详见 docs/LESSONS.md L18）",
+        "可选加固：广告拦截前置到 DNS 层 —— dns.rules 里插两条，{\"rule_set\":[\"jinx-direct\"],\"action\":\"route\",\"server\":\"dns-cn\"} 必须在 {\"rule_set\":[\"jinx-ads\",\"awanue-ads\"],\"action\":\"predefined\",\"rcode\":\"NXDOMAIN\"} 之前，两条都必须排在 geosite-cn 之前；拦截动作只能 predefined/reject，写成 route 等于没拦。dns.rules 与 route.rules 是两份独立的顺序表，改一处必须改另一处（docs/LESSONS.md L28）"
+    ]
 }

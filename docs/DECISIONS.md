@@ -659,6 +659,73 @@
 
 ---
 
+## D25 `🤖 AI` 组由 urltest 改为 **selector 优先**（推翻 m02132 的旧决定）
+
+- **日期**：2026-10-14
+- **触发**：用户指令「先把线上模板的 AI 分流组的策略变成 select」
+- **决策**：三端 profile 与 `templates/groups.json` 的 `🤖 AI` 组改为：
+
+  ```json
+  { "type": "selector", "tag": "🤖 AI",
+    "outbounds": ["Node-01", "...", "Node-05"],
+    "default": "Node-01" }
+  ```
+
+  - **删掉** `url` / `interval` / `tolerance` —— 那是 **urltest 专有字段**，
+    selector 写了直接 `FATAL ... unknown field "interval"`（实测）
+  - **新增** `default: "Node-01"` —— selector 要求有初始选中项；
+    **用占位节点即可**（模板本来就不拿来运行，用户原话「模板它不需要运行」）
+
+- **为什么**：
+
+  ① **用户的实际用法变了**。当年 m02132 要求「AI 直接就是 urltest + 台湾节点」，
+  是因为那时想让 AI 组自动优选。现在用户明确要 **select** —— AI 站点走哪个节点
+  由他手动决定，不要自动切。
+
+  ② **推翻了旧决定，所以旧门禁必须一起改**（见下）。
+
+- **备选方案**：
+
+  ① **保持 urltest 不动** —— **否决**：直接违背本次指令。
+
+  ② **改成 selector 且不给 default** —— **否决**：sing-box 的 selector 需要初始选中项；
+  实测缺少它会在 `audit_template` 报 `template_ai_no_default`（本仓门禁），
+  且运行行为不确定。
+
+  ③ **default 指向真实节点** —— **否决**：模板里只有占位节点（`Node-0X`），
+  没有"真实节点"可指；且模板不运行，指哪个都无意义。
+
+  ④ **完全禁止 urltest** —— **否决**：用户明确说「必须是在我（管理者）提出要求的情况下，
+  可以设置成 Urltest」。所以门禁改为**允许集合**而非单值。
+
+- **门禁改动**（这是本决策的主要工程量）：
+
+  | 旧 | 新 |
+  |---|---|
+  | `GROUP_TYPES_REQUIRED = {AI: "urltest"}`（单值） | `GROUP_TYPES_ALLOWED = {AI: ("selector","urltest")}`（集合）+ `GROUP_TYPES_PREFERRED = {AI: "selector"}` |
+  | `template_ai_not_urltest` | `template_ai_wrong_type`（不在允许集合里才报） |
+  | `template_ai_no_url` | 保留，但**只在 urltest 形态下**要求 url |
+  | — | **新增** `template_ai_no_default`（selector 形态必须有 default） |
+
+  `group_wrong_type` 的判据由「必须等于 want」改为「必须在 allowed 里」。
+
+- **前提 / 风险**：
+
+  ① **AI 组不再自动优选** —— 用户必须手动在客户端里切节点。
+  若某天觉得"还是自动选快的好"，改回 urltest 只需在对话里说一句（门禁允许这个值）。
+
+  ② **`default` 指向占位节点** —— 生成真实配置时，`mknode.py` 会把占位节点替换掉，
+  **那时 default 会指向一个不存在的 tag**。⚠️ **已知待验证点**：
+  实测 `mknode` 产出的 `local/ios.json` 里 AI 组仍是原样，
+  下次生成真实配置时要确认 default 被正确更新到真实节点（否则选择器选不中）。
+
+  ③ **负向用例跟着改了**：原 `ad-no-url` 用例改的是 AI 组的 `url`（AI 还是 urltest 时写的），
+  AI 变成 selector 后该字段不存在 ⇒ 用例假失败。已改名为 `ai-selector-no-default`、
+  改测缺 default，并新增 **`tpl` 作用域**（改真模板 —— 因为 `audit_template()` 只对模板生效，
+  `single`/`repo` 都走不到）。
+
+---
+
 ## 变更记录
 
 | 日期 | 变更 |
@@ -680,3 +747,4 @@
 | 2026-10-13 | 新增 D21（矩阵 path ⟺ 内核交叉对账探针；平台能力两页纳入文档快照；三类门禁的复核责任写进铁律 21，见 L39） |
 | 2026-10-13 | 新增 D22（新功能覆盖窗口起点显式声明 + inventories 逐版盘点）、D23（1.14.0 走 by-class 口径盘点；只有两条真启用），见 L43 / L44 |
 | 2026-10-13 | 新增 D24（route 层新增 `reject(udp/443)` 封 QUIC/HTTP3；route.rules 12 → 13 条） |
+| 2026-10-14 | 新增 D25（`🤖 AI` 组 urltest → **selector 优先**；门禁由单值改允许集合 + 新增 `template_ai_no_default`） |
