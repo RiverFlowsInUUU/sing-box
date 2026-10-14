@@ -2172,6 +2172,59 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## L50 四道门禁全绿的配置，节点却永远连不上 —— 凭据性的字段靠默认值
+
+**现象**：2026-10-14，用户给了一个自建 HTTP 代理节点
+（`203.0.113.7:443`，Go 写的 Zoraxy 反代，**自签证书** CN=Zoraxy Self-host）。
+生成的配置里 `tls.insecure` 取了默认值 `false`。结果：
+
+- `python tools/audit.py <cfg>` —— **全绿**
+- `sing-box check` —— **通过**
+- `sing-box run` —— **启动无 FATAL**，`sing-box started`
+- 但每一次连接都被 TLS 层拒绝：
+  `tls: failed to verify certificate: x509: certificate signed by unknown authority`
+
+用户看到的现象是「**节点 ping 不通**」，并一度以为是 1.12.19 → 1.14.3 的内核差异。
+真内核对比实测（两个版本各跑一次真请求）证明**与版本无关**：
+把 `insecure` 改成 `true`，**1.12.19 与 1.14.3 同时变通**（出口 IP 均为 `203.0.113.7`）。
+
+**根因**（两层，缺一不可）：
+
+1. **`share-link.py:106`** —— `insecure` 只从链接 query 取：
+   `_truthy(q.get("insecure") or q.get("allowinsecure"))`。
+2. 而 `http://` / `socks://` 代理**不在 `share-link.py` 的支持范围内**
+   （见该文件末尾的提示：*「socks:// 与 http:// 代理请按 PROTOCOL-MAPPING §1 手工写」*）。
+   ⇒ 这个节点是**手工拼**的，而手工拼的路上**没有任何地方承载「服务端是不是自签」**。
+   默认值 `false` 于是成了**唯一结局**，且它是**静默**的。
+
+**为什么没被拦住**：这是本仓的**新型盲区** ——
+前 49 条教训都是「**配置写错了**」（字段名错 / 值错 / 位置错 / 缺字段），
+而这一条是「**配置完全合法，但链路不可用**」。
+`insecure:false` 对**真证书**服务端是**正确写法**，所以不能一刀切禁止；
+能不能连上取决于**服务端证书**，而那个信息**不在配置文件里** ——
+任何纯静态检查都够不着它。四道门禁（audit / negtest / check / run）全部测的是
+「配置是否合法」，没有一个测「**这条链路是否真的能通**」。
+
+**修法**：
+
+1. **门禁 `tls_insecure_implicit`（WARN）** —— 开了 TLS 但**没写** `insecure` 键的节点，
+   报 WARN 指名道姓问一句。判据刻意**不判值、只判键在不在**：
+   显式写了就说明作者想过这问题；靠默认值则**必然没想过**。
+   报 WARN 不报 ERROR，因为真证书节点本来就不需要这个键，报 ERROR 会全部打死；
+   WARN 不进 `Report.ok()`、不挂 CI，但**每次 audit 都出现在输出里**，反复可见。
+2. **`docs/PROTOCOL-MAPPING.md` §4「常见解码坑」** 新增一行（症状是「全绿但连不上」），
+   §5 自检清单第 4 条补「自签证书必须显式 `insecure: true`」。
+   自签判定给了可执行的命令：`openssl s_client -connect <host>:<port>` 看 issuer 是否等于 subject。
+
+**遗留（明说，不假装解决）**：门禁只能逼出「显式声明」，**逼不出「声明得对」**——
+写了 `insecure: false` 而服务端自签，本门禁**不会**报。
+彻底堵死需要**生成后实连验证**（真内核跑一次、打一个请求、不通就拒绝落盘），
+那要新增一条真网络依赖，尚未实现。当前的对策是：**把自检命令写进文档，让人能自己查**。
+
+**门禁**：`tls_insecure_implicit`
+
+---
+
 ## 附：怎么加一条新教训
 
 1. 在 `tools/audit.py` 里把能拦住这次事故的**门禁 code** 实现出来（不能只写文档）。

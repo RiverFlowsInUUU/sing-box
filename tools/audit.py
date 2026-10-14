@@ -572,6 +572,39 @@ def audit_repo_rules(cfg, rep: Report, is_template: bool = False):
                     "含真实节点的配置请放仓库外的 local/ 目录（已 gitignore），不要提交",
                 )
 
+    # 1b-2) TLS 节点必须**显式**声明 `insecure`，不许靠默认值 —— 自签证书陷阱
+    #
+    # 事故（2026-10-14）：一个自建 HTTP 代理（`114.33.6.158:443`，Go 的 Zoraxy 反代，
+    # 自签证书 CN=Zoraxy Self-host）。配置里 `tls.insecure` 写的是默认的 `false`，
+    # 于是**语法合法、`sing-box check` 通过、`run` 启动无 FATAL、但 `initialize` 之后
+    # 每一个连接都被 TLS 层拒绝**：
+    #     `tls: failed to verify certificate: x509: certificate signed by unknown authority`
+    # 用户表现是「节点 ping 不通」，而所有静态门禁全绿 —— 属于**四道门禁都测不到的盲区**。
+    #
+    # 为什么静态查不出：`insecure:false` 对**真证书**服务端是**正确写法**，不能一刀切禁。
+    # 能不能连上取决于服务端证书，而那不在配置文件里。所以门禁只做这一件事：
+    # **强迫 `insecure` 是显式写的**——显式写了就说明作者至少想过这问题；
+    # 靠默认值（键缺失）则必然没想过，直接 WARN 指着鼻子问。
+    #
+    # 为什么不是 ERROR：报 ERROR 会把现有真证书节点全部打死（它们本来就不需要这个键）。
+    # WARN 不进 `Report.ok()`，不挂 CI，但会出现在每次 audit 输出里 —— 反复可见。
+    for i, ob in enumerate(cfg.get("outbounds", [])):
+        if not isinstance(ob, dict):
+            continue
+        tls = ob.get("tls")
+        if not isinstance(tls, dict) or not tls.get("enabled"):
+            continue
+        if "insecure" not in tls:
+            rep.warn(
+                "tls_insecure_implicit",
+                f"outbounds[{i}] ({ob.get('tag')}) 开了 TLS 但**没写** `insecure`，"
+                "当前取默认值 false。若服务端是**自签证书**（自建反代 / 面板自带证书），"
+                "这会让 TLS 握手被拒 —— 表现为「配置全绿、`check` 过、启动无 FATAL，"
+                "但节点永远连不上」。真证书节点不必改；自签的请在 tls 里显式写 "
+                '"insecure": true。自签判定：`openssl s_client -connect <host>:<port>` '
+                "看 issuer 是否等于 subject",
+            )
+
     route = cfg.get("route", {})
 
     # 1c) http_client / download_detour 指向的 direct 出站不能是"空"的

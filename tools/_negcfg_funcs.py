@@ -228,4 +228,25 @@ CASES = [
     ("resolve-missing-a", "m_resolve_missing", "resolve_missing_ipv4_only", "WARN"),
     ("no-auto-detect-interface-a", "m_no_auto_detect_interface",
      "tun_without_auto_detect_interface", "ERROR"),
+    # L50：TLS 节点没写 insecure 键（靠默认值）—— 自签证书陷阱
+    ("tls-insecure-implicit-a", "m_tls_insecure_implicit", "tls_insecure_implicit", "WARN"),
 ]
+
+
+def m_tls_insecure_implicit(cfg):
+    """L50：开了 TLS 但**没写** insecure 键 —— 模拟一个自签证书节点。
+
+    破坏方式：把第一个 tls.enabled 节点里的 insecure 键整个删掉。
+    门禁判据是「键在不在」而不是「值是什么」，所以删键就该响。
+    """
+    for ob in cfg.get("outbounds", []):
+        if isinstance(ob, dict):
+            tls = ob.get("tls")
+            if isinstance(tls, dict) and tls.get("enabled"):
+                tls.pop("insecure", None)
+                return
+    # 基线配置里若没有 tls 节点，就地造一个（保证用例恒可执行）
+    cfg.setdefault("outbounds", []).append({
+        "type": "http", "tag": "neg-tls", "server": "203.0.113.7",
+        "server_port": 443, "tls": {"enabled": True},
+    })

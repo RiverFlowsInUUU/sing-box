@@ -247,6 +247,7 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 | `decode key: illegal base64` | SS 2022 密码长度/base64 不对 | 核对方法对应密钥长度 |
 | `invalid public_key` | reality `pbk` 抄错 | 原样复制，别加空格 |
 | 有 TLS 但握手失败 | `security=reality` 漏写 `reality` 块 | 补 `reality.enabled/public_key` |
+| **配置合法、`check` 过、启动无 FATAL，但节点始终连不上** | 服务端是**自签证书**（如自建 Zoraxy / 反代），而 `tls.insecure` 是默认的 `false` —— `share-link.py` 只从链接 query 的 `insecure`/`allowinsecure` 取值，**手工写的 `http://` 代理没有任何地方承载这个信息** | 在节点的 `tls` 里显式写 `"insecure": true`。判断依据：`openssl s_client -connect <host>:443` 看 `issuer` 是否等于 `subject`（自签）；或直接看 sing-box 日志有无 `x509: certificate signed by unknown authority` |
 | `http_client is conflict with deprecated download_detour` | 两者同时存在 | 删 `download_detour`，只用 `http_client` |
 | 手机上能启动、但节点全无延迟 / 只有上传没下载 / 内存爆 1GB | 缺 `route.auto_detect_interface: true`，出站回灌 tun | 在 `route` 里加 `"auto_detect_interface": true` |
 
@@ -256,6 +257,7 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 2. 所有字段名都能在 `docs/schema.json` 的对应 `$defs` 里找到
 3. `server` / `server_port` / 凭据三项齐全
 4. TLS 需求满足（trojan/anytls/hysteria2/tuic 必须有；vless 看 `security`）
+   - **自签证书**的服务端必须显式 `"insecure": true`；写了 `insecure: false` 而服务端自签 ⇒ 语法全绿但**永远连不上**（上面坑表第 6 行）
 5. 没有 `udp` / `tfo` / `domain_strategy` 这类老字段
 6. tag 无重复、已加入目标分流组的 `outbounds`（代理组是 urltest，加进去即自动测速）
 7. 跑 `python tools/audit.py <profile> --platform <p> --check` 全绿
