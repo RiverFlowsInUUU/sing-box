@@ -14,12 +14,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def make_doc_runner(doc_mutations, audit_codes):
+def make_doc_runner(doc_mutations, audit_codes, register=None, unregister=None):
     """返回 `run_case_doc(name, mutate, base_text, level)`。
 
     注入 `doc_mutations` 与 `_audit_codes` 而不是直接 import negtest，
     避免循环依赖（negtest → _negdoc_runner → negtest）。
+
+    `register` / `unregister` 同样注入：它们是 negtest 里的**安全网登记表**
+    （信号/退出时兜底还原）。不注入就会又变成循环 import。
+    不给时退化为空操作 —— 但生产路径必须给，否则被 SIGTERM 时会留脏文件
+    （2026-10-19 实测过：docs/version-matrix.json 被永久改坏）。
     """
+    _register = register or (lambda *a, **k: None)
+    _unregister = unregister or (lambda *a, **k: None)
 
     def run_case_doc(name, mutate, base_text, level, use_kernel=False):
         """临时改一份**真实**仓库文档/工具文件，跑整仓审计，再立即还原。
@@ -38,6 +45,7 @@ def make_doc_runner(doc_mutations, audit_codes):
             raise RuntimeError(
                 f"❗ {target_rel} 里找不到唯一锚点（出现 {n} 次）：{old_anchor[:60]!r}"
             )
+        _register(target, original)        # 信号/退出时兜底还原
         try:
             target.write_bytes(
                 text.replace(old_anchor, new_anchor, 1).encode("utf-8")
@@ -47,6 +55,7 @@ def make_doc_runner(doc_mutations, audit_codes):
             return audit_codes(None, level, no_check=not use_kernel)
         finally:
             target.write_bytes(original)
+            _unregister(target)
             if target.read_bytes() != original:
                 raise RuntimeError(
                     f"❗ 还原 {target_rel} 失败 —— 请手工 `git checkout -- {target_rel}`"

@@ -2303,6 +2303,84 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## L54 负向用例改真文件，被「硬杀」时会永久污染仓库 —— 而症状很像偶发
+
+**现象**：2026-10-19 我实测复现的。
+
+`repo` / `matrix` / `doc` 三个作用域都会**临时改真实入库文件**
+（`profiles/*.json`、`docs/version-matrix.json`、`docs/EXPERIENCES.md`），
+保证方式是 `try/finally` + 字节校验。**但 `finally` 只在正常异常路径执行。**
+
+实测：
+
+```
+python tools/negtest.py &           # 正常在跑
+（25 秒后）git status = [ M docs/version-matrix.json]   ← 用例正改着它
+kill -TERM <pid>
+git status = [ M docs/version-matrix.json]              ← 脏文件留下了
+```
+
+**之后每次跑那个用例都报**：
+
+```
+❗ docs/version-matrix.json 里找不到唯一锚点（出现 0 次）
+```
+
+**这个症状的欺骗性在于**：它看起来像「某个用例偶发崩溃」，
+**而实际上是仓库已经被污染了** —— 而 `version-matrix.json` 是门禁的**真相源**，
+被改坏后引用它的检查全部失真。
+
+**根因**（不是我的代码，基线 `d09dcee` 起就有）：
+
+- **Windows 的信号语义与 POSIX 不同。** `os.kill(pid, SIGTERM)` / `taskkill /F` /
+  任务管理器 / `timeout` 命令走的都是 `TerminateProcess` ——
+  **进程瞬间消失，`finally` / `atexit` / 信号处理器一律不执行。**
+  实测 `subprocess.send_signal(2)` 在 Windows 上直接
+  `ValueError: Unsupported signal: 2`。
+- 所以 `_negdoc_runner.py` 注释里写的承诺
+  「`finally` 里还原并校验字节一致……**绝不留下半改状态**」
+  —— **在硬杀场景下不成立。**
+
+**为什么没被拦住**：
+
+- 负向用例自己**测不到这件事**：它测的是「门禁响不响」，
+  而「上轮留下的脏状态」会让它**假失败**（报「找不到锚点」而不是「门禁没响」）。
+- 静态门禁只看内容，不看「工作区是否被上一轮污染」。
+- 最要命的是：**这个失败很容易被当成偶发** ——
+  重跑一次如果恰好干净了（因为有人手动 `git checkout` 过）就「好了」。
+
+**修法（两层，第二层才是关键的）**：
+
+1. **信号处理器**（`_install_safety_net`）：注册 `SIGTERM/SIGINT/SIGHUP/SIGBREAK`，
+   触发时还原登记表里的文件。
+   ⚠️ **但这一层覆盖面有限** —— 它只兜得住 Ctrl-C / Ctrl-Break。
+   硬杀收不到信号，处理器不会跑。**不能靠它。**
+2. **开跑前自检**（`_guard_against_leftover_dirty`）：**不赌「上轮正常结束」**，
+   每次开跑前用 `git status` 比对那三个会被改的真实文件，
+   发现脏就**恢复并显式告知**（不静默修复 —— 「上轮被杀」本身是值得知道的事实）。
+
+**第 2 层的思路才是对的，而且它和本仓别的做法一致**：
+
+> **不要设计需要「持续正确」的东西。**
+> 设计成「每次用的时候重新算一遍」，就不存在「它中途坏了」这个问题。
+
+**验证**（实跑）：
+
+```
+干净状态      → 不打扰，直接跑                        ✓
+人为造脏      → 检出 + 显式告知 + 自动恢复（跑后 git status 为空） ✓
+完整回归      → 69/69 全部命中                        ✓
+```
+
+**门禁**：无独立 code（它是运行时保护，不是静态检查）。
+**但触发条件可复现**：`python tools/negtest.py & sleep 25; kill -TERM $!`。
+
+**同类**：L52（判据与待检特征同源）、L53（规则只写在注释里）。
+本条是「**承诺写在注释里，但实现覆盖不到承诺的场景**」——
+和 L53 是同一个家族：**散文里的保证不算保证。**
+
+---
+
 ## L51 门禁全绿、`check` 也过，但配置**启动即 FATAL** —— 组默认项成了悬空引用
 
 **现象**：2026-10-19 外部审查实测。走 README §2 的原命令生成配置：

@@ -38,6 +38,121 @@ ROOT = Path(__file__).resolve().parent.parent
 NEGDIR = ROOT / "local" / "_negtest"
 BASE = ROOT / "profiles" / "1.14" / "android-lazy.json"
 
+
+# ── 「改真实文件」的两层保护 ──────────────────────────────────────
+# 背景（2026-10-19 实测复现）：
+#   repo / matrix / doc 三个作用域都会临时改**真实入库文件**，靠 try/finally 还原。
+#   但 Windows 上 os.kill(SIGTERM) / taskkill /F / 任务管理器 / timeout 命令
+#   走的都是 TerminateProcess —— **进程瞬间消失，finally / atexit / 信号处理器
+#   一律不执行**。实测跑到一半 SIGTERM → docs/version-matrix.json 永久留在
+#   「被故意改坏」的状态；而它是门禁的真相源，被污染后引用它的检查全部失真。
+#
+# 所以做两层：
+#   ① 信号处理器 —— 只兜得住 Ctrl-C / Ctrl-Break（覆盖面有限，见函数说明）
+#   ② 开跑前自检 —— **不赌上轮正常结束**，每次开跑前重新比对，发现脏就恢复
+#      （真正管用的是这层：硬杀之后唯一的机会就是下一次开跑）
+_DIRTY = {}
+
+
+def register_dirty(path, original_bytes):
+    """改动真实文件前登记，供信号/退出时兜底还原。"""
+    _DIRTY[str(path)] = original_bytes
+
+
+def unregister_dirty(path):
+    """正常还原后注销。"""
+    _DIRTY.pop(str(path), None)
+
+
+def restore_all_dirty():
+    """把登记表里还没还原的文件全部还原。返回还原成功数。"""
+    n = 0
+    for path_str, original in list(_DIRTY.items()):
+        try:
+            p = Path(path_str)
+            if p.read_bytes() != original:
+                p.write_bytes(original)
+            _DIRTY.pop(path_str, None)
+            n += 1
+        except OSError:
+            pass          # 尽力而为：信号处理器里不能抛异常
+    return n
+
+
+def _install_safety_net():
+    """信号 + 退出时兜底还原。只做还原，不试图继续跑测试。
+
+    ⚠️ 覆盖面（Windows 实测）：
+      · Ctrl-C  → SIGINT，处理器会跑 ✓
+      · Ctrl-Break → SIGBREAK，会跑 ✓
+      · os.kill(SIGTERM) / taskkill /F / 任务管理器 / timeout 命令
+        → TerminateProcess，**处理器不会跑** ✗
+        （`subprocess.send_signal(2)` 在 Windows 上直接 ValueError）
+    所以这一层只是补充；真正管用的是 `_guard_against_leftover_dirty()`。
+    """
+    import atexit
+    import signal as _signal
+
+    def _handler(signum, _frame):
+        restore_all_dirty()
+        _signal.signal(signum, _signal.SIG_DFL)
+        raise SystemExit(128 + signum)
+
+    # ⚠️ 常量必须在 try **里面**取：Windows 的 signal 模块没有 SIGHUP，
+    #    写成循环里的元组字面量会在求值时就抛 AttributeError，except 轮不到
+    #    —— 那会让整个 negtest.py 启动即崩（本行第一版就是这么错的）。
+    for _sig_name in ("SIGTERM", "SIGINT", "SIGHUP", "SIGBREAK"):
+        try:
+            _signal.signal(getattr(_signal, _sig_name), _handler)
+        except (AttributeError, ValueError, OSError):
+            pass          # 平台没有这个信号 / 非主线程装不上 —— 都跳过
+    atexit.register(restore_all_dirty)
+
+
+_install_safety_net()
+
+
+def _guard_against_leftover_dirty():
+    """开跑前自检：上轮若被硬杀留下脏文件，先恢复。
+
+    不静默修复 —— 显式打印，因为「上轮被杀」本身是值得知道的事实。
+    git 不可用时跳过并说明，不假装检查过。
+    """
+    watched = [
+        "profiles/1.14/android-lazy.json",
+        "docs/version-matrix.json",
+        "docs/EXPERIENCES.md",
+    ]
+    try:
+        r = subprocess.run(
+            ["git", "status", "--porcelain", "--"] + watched,
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        print("  ⚠️ git 不可用 —— 跳开跑前自检（无法判断上轮是否留了脏文件）")
+        return
+    if r.returncode != 0:
+        print("  ⚠️ git status 失败 —— 跳开跑前自检")
+        return
+    dirty = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    if not dirty:
+        return
+    print("  ⚠️ 检测到上一轮**未正常结束**留下的改动（很可能是被硬杀）：")
+    for ln in dirty:
+        print(f"       {ln.rstrip()}")
+    print("     → 先恢复到 git 版本再开跑（否则相关用例会「找不到锚点」而假失败）")
+    try:
+        subprocess.run(
+            ["git", "checkout", "--"] + watched,
+            cwd=str(ROOT), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=20, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+
 # Windows 上 stdout 重定向到管道/文件时，Python 默认用 GBK，本文件到处是 emoji
 # （✅/❌），一 `| tee` 就 UnicodeEncodeError 崩掉 —— 而「管道里崩」恰恰是
 # 「本地绿、CI 红」这一类问题的温床（同 L30 的思路：输出编码也是环境依赖）。
@@ -477,6 +592,7 @@ def run_case_repo(name, mutate, base_text, level):
     original = BASE.read_bytes()
     cfg = copy.deepcopy(json.loads(base_text))
     mutate(cfg)
+    register_dirty(BASE, original)          # 见文件头「两层保护」
     try:
         BASE.write_bytes(
             (json.dumps(cfg, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
@@ -484,6 +600,7 @@ def run_case_repo(name, mutate, base_text, level):
         return _audit_codes(None, level)
     finally:
         BASE.write_bytes(original)
+        unregister_dirty(BASE)
         if BASE.read_bytes() != original:
             raise RuntimeError(f"❗ 还原 {BASE} 失败——请手工 git checkout 恢复")
 
@@ -549,6 +666,7 @@ def run_case_matrix(name, mutate, base_text, level):
     if original.count(old_anchor.encode("utf-8")) != 1:
         raise RuntimeError(f"❗ 矩阵里找不到唯一的锚点 {old_anchor!r}")
     try:
+        register_dirty(MATRIX, original)    # 见文件头「两层保护」
         MATRIX.write_bytes(text.replace(old_anchor, new_anchor).encode("utf-8"))
         # 探针需要真实内核：没有可执行文件时**跳过**（不能报绿，那是撒谎）。
         codes = _audit_codes(None, level, no_check=False)
@@ -557,6 +675,7 @@ def run_case_matrix(name, mutate, base_text, level):
         return codes
     finally:
         MATRIX.write_bytes(original)
+        unregister_dirty(MATRIX)
         if MATRIX.read_bytes() != original:
             raise RuntimeError(f"❗ 还原 {MATRIX} 失败——请手工 git checkout 恢复")
         # 探针留下的临时文件也要清掉：它在 local/_negtest/ 里虽不被扫，但会积垃圾。
@@ -573,7 +692,10 @@ from negdoc_mutations import DOC_MUTATIONS, cases as _negdoc_cases   # noqa: E40
 import _negdoc_funcs as _ndf                                        # noqa: E402
 import _negcfg_funcs as _ncf                                        # noqa: E402
 
-run_case_doc = make_doc_runner(DOC_MUTATIONS, _audit_codes)
+run_case_doc = make_doc_runner(
+    DOC_MUTATIONS, _audit_codes,
+    register=register_dirty, unregister=unregister_dirty,
+)
 
 # 把 doc 组用例并入 CASES（破坏函数已在下方以 m_* 形式定义）
 for _name, _fn, _code, _lv, _scope in _negdoc_cases():
@@ -599,6 +721,8 @@ def main():
     if not cases:
         print(f"❌ 没有匹配 {args.k!r} 的用例", file=sys.stderr)
         return 2
+
+    _guard_against_leftover_dirty()      # 上轮被硬杀的话先恢复
 
     print("═" * 68)
     print("  门禁负向回归：每个用例故意改坏一处，期望对应门禁报出指定 code")
