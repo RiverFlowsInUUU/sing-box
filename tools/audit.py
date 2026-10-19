@@ -3149,11 +3149,16 @@ def infer_platform(name: str):
       空集的语义是「未知」：调用方应据此**跳过平台特定检查**，
       而不是假设它要满足所有平台。要精确检查就显式传 --platform。
 
-    ⚠️ 光返回空集还不够：check-all.sh 不带文件名时会扫 `local/*.json`，
-      而那可能是任意名字（`--out` 支持自定义）—— 全跳过就成了**假阴性**。
-      所以再加一层**内容线索**：配置里带 `strict_route` 说明它按桌面语义写，
-      不该再拿「移动端不支持 strict_route」去报它。
-      （反向不成立：没有 strict_route 推不出是移动端 —— 那种情况留给空集处理。）
+    ⚠️ 空集不能静默：check-all.sh 不带文件名时会扫 `local/*.json`，
+      而那些名字可以是任意的（`--out` 支持自定义）—— 全跳过就成了**假阴性**。
+
+      **本函数只按文件名推断**，推不出就 `return set()`，不做任何内容猜测。
+      空集由调用方（`main()`）转成一条**显式 WARN**，告诉用户
+      「平台专属检查已全部跳过」。
+
+      ⚠️ 曾经试过「带 `strict_route` ⇒ 按桌面语义」这条**内容线索**，已撤掉：
+      那条门禁要抓的恰恰是「移动端配置带了 `strict_route`」，
+      拿它当判据等于在待检样本上把门禁自己关掉（自噬，见 LESSONS.md L52）。
     """
     n = name.lower()
     if "android" in n:
@@ -3366,13 +3371,11 @@ def main():
             failed = True
             continue
         platforms = {args.platform} if args.platform else infer_platform(t.name)
-        # ★ 文件名推断不出平台时（空集），再看内容线索（2026-10-19 审查 P2-B）。
-        #   光靠空集会在 `local/*.json` 上**漏检** —— 那些文件名可以是任意的。
-        #   线索：配置里带 `strict_route` ⇒ 它按桌面语义写，
-        #   ⚠️ 但**不能**用「带 strict_route ⇒ 它是桌面」这种线索 ——
+        # ★ 文件名推断不出平台（空集）时，**只报一条显式 WARN**，不做内容猜测。
+        #   曾经试过「带 strict_route ⇒ 按桌面语义」这条线索，已撤掉 ——
         #   那条门禁要抓的恰恰是「移动端配置带了 strict_route」，
-        #   拿它当判据等于在待检样本上把门禁自己关掉（自噬）。
-        #   正确做法：空集就明确报一条 WARN，让人知道平台专属检查被跳过了。
+        #   拿它当判据等于在待检样本上把门禁自己关掉（自噬，LESSONS.md L52）。
+        #   静默跳过比报错更危险：用户以为查过了，其实没有。
         platform_unknown = not platforms
         # 骨架模板不是可运行配置，跳过 check / run
         is_template = t.resolve() == (ROOT / "templates" / "groups.json").resolve()
