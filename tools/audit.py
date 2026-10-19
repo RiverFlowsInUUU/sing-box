@@ -749,6 +749,26 @@ def audit_repo_rules(cfg, rep: Report, is_template: bool = False):
                     f"outbounds[{i}] ({o.get('tag')}) 引用了不存在的出站：{missing}"
                     "（sing-box check 不校验这个）",
                 )
+            # ★ selector/urltest 的 `default` 同样会变成**悬空引用**，
+            #   而 check 与上面那个 refs 检查都覆盖不到它。
+            #   真 FATAL：`start service: start outbound: start endpoint/
+            #   selector[🤖 AI]: default outbound not found: Node-01`
+            #   —— 只在 `run` 阶段炸，`check` 全绿。（2026-10-19 审查 P1-A）
+            #
+            #   内置出站（block / direct 的别名）不算悬空：🚫 AD 的 default
+            #   就是 "block"，它指向类型而非 tag。
+            # ⚠️ 骨架要跳过：`templates/groups.json` 是**模板**，它自己不含占位节点
+            #   （占位节点在 profiles/ 里）。骨架的 🤖 AI 写着 default="Node-01"
+            #   是有意的 —— D25 的 `template_ai_no_default` 门禁明确允许「占位节点亦可」。
+            #   拿产物级检查去套模板会误报（我加这条时踩了一次）。
+            _dflt = o.get("default")
+            if (not is_template and _dflt is not None
+                    and _dflt not in tagset and _dflt not in ("block", "direct")):
+                rep.error(
+                    "default_dangling",
+                    f"outbounds[{i}] ({o.get('tag')}) 的 default={_dflt!r} 不存在"
+                    "（sing-box check 不校验；run 阶段会 FATAL）",
+                )
             if not refs:
                 # ⚠️ 空组是**真 FATAL**：`initialize outbound[N]: missing tags`，
                 # 而且 `sing-box check` 对它**完全静默**（只反序列化、不初始化）。
@@ -1843,6 +1863,13 @@ def run_singbox_check(binary: str, cfg_path: Path, rep: Report):
             [binary, "check", "-c", str(cfg_path)],
             capture_output=True,
             text=True,
+            # ★ 必须显式 utf-8（2026-10-19 审查 P1-B）：
+            #   内核输出里含 emoji（如 selector[🤖 AI]），中文 Windows 的
+            #   默认 cp936 解不了 U+1F916 → 读取线程抛 UnicodeDecodeError →
+            #   stdout 变 None → 输出被当成空串 → **FATAL 被静默吞掉**。
+            #   CI 在 ubuntu（UTF-8）跑，永远暴露不了这个问题。
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
         )
     except FileNotFoundError:
@@ -1907,6 +1934,11 @@ def run_singbox_run(binary: str, cfg_path: Path, rep: Report, seconds: int = 15)
                 [binary, "run", "-c", str(tmp_cfg)],
                 capture_output=True,
                 text=True,
+                # ★ 同 run_singbox_check：必须显式 utf-8。
+                #   这里是「唯一能抓启动期 FATAL」的那一层 ——
+                #   编码一错，它恰好会把最该抓的那条吞掉。
+                encoding="utf-8",
+                errors="replace",
                 timeout=seconds,
                 cwd=td,
             )
@@ -3103,6 +3135,26 @@ def audit_redaction(rep: Report):
 
 
 def infer_platform(name: str):
+    """按文件名推断平台。**推断不出时返回空集，不返回三端全集。**
+
+    ★ 2026-10-19 审查 P2-B：原来推断不出就返回 {desktop, android, ios}，
+      而平台特定检查的写法是「看 platforms 里有没有 android/ios」——
+      于是「不知道平台」被当成「三端都要满足」，必然假阳性。
+
+      实例：`mknode.py --out local/a-proxy.json`（README 明确支持的自定义名）
+      生成的是 desktop 配置（带 strict_route），但文件名不含 desktop
+      → 被当三端审 → 报 `inbounds[0].strict_route 在 android/ios 上不可用`。
+      而同一份文件 mknode 说「门禁全绿」—— **同一份文件两个相反结论**。
+
+      空集的语义是「未知」：调用方应据此**跳过平台特定检查**，
+      而不是假设它要满足所有平台。要精确检查就显式传 --platform。
+
+    ⚠️ 光返回空集还不够：check-all.sh 不带文件名时会扫 `local/*.json`，
+      而那可能是任意名字（`--out` 支持自定义）—— 全跳过就成了**假阴性**。
+      所以再加一层**内容线索**：配置里带 `strict_route` 说明它按桌面语义写，
+      不该再拿「移动端不支持 strict_route」去报它。
+      （反向不成立：没有 strict_route 推不出是移动端 —— 那种情况留给空集处理。）
+    """
     n = name.lower()
     if "android" in n:
         return {"android"}
@@ -3110,7 +3162,7 @@ def infer_platform(name: str):
         return {"ios"}
     if "desktop" in n or "windows" in n or "win" in n:
         return {"desktop"}
-    return {"desktop", "android", "ios"}
+    return set()
 
 
 def find_singbox(explicit=None):
@@ -3314,6 +3366,19 @@ def main():
             failed = True
             continue
         platforms = {args.platform} if args.platform else infer_platform(t.name)
+        # ★ 文件名推断不出平台时（空集），再看内容线索（2026-10-19 审查 P2-B）。
+        #   光靠空集会在 `local/*.json` 上**漏检** —— 那些文件名可以是任意的。
+        #   线索：配置里带 `strict_route` ⇒ 它按桌面语义写，
+        #   不该再拿「移动端不支持 strict_route」去报它。
+        #   （反向不成立：没有 strict_route 推不出是移动端，那属于空集 → 跳过。）
+        if not platforms:
+            try:
+                _probe = json.loads(t.read_text(encoding="utf-8-sig"))
+                if any(isinstance(ib, dict) and "strict_route" in ib
+                       for ib in (_probe.get("inbounds") or [])):
+                    platforms = {"desktop"}
+            except Exception:
+                pass   # 读不了/不是 JSON：留给正常流程去报错
         # 骨架模板不是可运行配置，跳过 check / run
         is_template = t.resolve() == (ROOT / "templates" / "groups.json").resolve()
         rep = Report(str(t))

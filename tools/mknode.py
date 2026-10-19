@@ -135,7 +135,12 @@ def build(version: str, platform: str, nodes: list, group: str,
         raise MkError(f"{skel.relative_to(ROOT)} 里没有 outbounds")
 
     # ① 给节点起名：用户给了就用，否则用链接里的 tag，再不行用 type-platform-N
-    used = {ob.get("tag") for ob in cfg["outbounds"] if isinstance(ob, dict)}
+    # ★ 占位节点稍后会被删掉，它们占的名字**不算被占用**（2026-10-19 审查 P3-B）。
+    #   原来把全部现有 tag 都收进 used，包括 Node-01..05 这些马上要删的占位 ——
+    #   于是分享链接的 tag 恰好叫 `Node-01` 时，会被改名成 `Node-01 2`
+    #   （一个毫无意义的序号，还会出现在客户端的策略组里）。
+    _ph_tags = {t for _, t, _ in identify_placeholder(cfg)}
+    used = {ob.get("tag") for ob in cfg["outbounds"] if isinstance(ob, dict)} - _ph_tags
     for i, nd in enumerate(nodes):
         want = (names[i] if i < len(names) and names[i] else nd.get("tag") or "").strip()
         if not want:
@@ -157,6 +162,18 @@ def build(version: str, platform: str, nodes: list, group: str,
         for ob in cfg["outbounds"]:
             if isinstance(ob, dict) and isinstance(ob.get("outbounds"), list):
                 ob["outbounds"] = [t for t in ob["outbounds"] if t not in old_tags]
+            # ★ 组默认项同样要摘 —— 只清 outbounds 清不掉它。
+            #
+            #   骨架里 🤖 AI 写着 "default": "Node-01"（指向占位节点）。
+            #   只清 outbounds 会留下一个**指向已删除节点**的 default，
+            #   而内核的 selector 启动时会去找它：
+            #     FATAL start outbound: selector[🤖 AI]: default outbound not found: Node-01
+            #   `check` 抓不到（只校验字段合法性），只有 `run` 能抓到。
+            #
+            #   只清「指向被删占位节点」的那种 —— 别的 default（如 🚫 AD 的
+            #   "block"）必须原样留着，它指向的是内置出站不是节点。
+            if isinstance(ob, dict) and ob.get("default") in old_tags:
+                del ob["default"]
 
     # ③ 插节点：放在第一个组之前，保持「节点在前、组在后」的骨架排版
     insert_at = next(

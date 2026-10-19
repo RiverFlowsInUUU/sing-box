@@ -7,3 +7,8 @@ __pycache__/
 *.log
 local/
 local/test-input/
+# 本机内核：tools/check-all.sh 会在 bin/ 找 sing-box[.exe]。
+# 它是从上游下载的 80+ MB 二进制，**不属于仓库内容** ——
+# 不加这条的话，任何人往 bin/ 放一次内核，`git status` 就会多出一个
+# 未跟踪的大文件，很容易被 `git add -A` 误提交（2026-10-19 加）。
+bin/

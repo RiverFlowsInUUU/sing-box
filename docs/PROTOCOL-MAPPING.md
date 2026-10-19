@@ -224,14 +224,15 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 ```jsonc
 { "type": "urltest", "tag": "🚀 Proxy", "outbounds": ["Node-01", "..."],
   "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
-{ "type": "urltest", "tag": "🤖 AI",    "outbounds": ["Node-01", "Node-04"],
-  "url": "http://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 100 }
+{ "type": "selector", "tag": "🤖 AI",   "outbounds": ["Node-01", "Node-04"],
+  "default": "Node-01" }
 { "type": "selector", "tag": "🚫 AD",   "outbounds": ["block"], "default": "block" }
 ```
 
 - 用户说"放代理组" → 把新节点 tag 加进 `🚀 Proxy.outbounds`。它是 urltest，加进去就等于加进自动测速。
-- 用户说"放智能组" → 加进 `🤖 AI.outbounds`。它也是 urltest，只放用户想给 AI 用的节点（例如全部台湾节点）；
-  **不要把代理组放进智能组的 `outbounds`** —— urltest 里嵌 urltest 会串联两次测速，两个组结果几乎一样，智能组就失去意义。
+- 用户说"放智能组" → 加进 `🤖 AI.outbounds`。它是 **selector**（手动切节点，不自动优选，见 D25），
+  只放用户想给 AI 用的节点（例如全部台湾节点）；`default` 要指向组内真实存在的 tag。
+  **不要把代理组放进智能组的 `outbounds`** —— 组里嵌组会让两个组的语义纠缠，智能组就失去意义。
 - **去广告组只放 `block`，永远不把代理节点放进去。**
 - tag 一旦被规则集/规则引用就不能随便改名：`🚀 Proxy` `🤖 AI` `🚫 AD` `direct` `block` 是保留名。
 - `route.final` 固定指向 `🚀 Proxy`，即全局兜底走 urltest 优选。

@@ -95,6 +95,19 @@ def m_dangling_outbound(cfg):
     cfg["route"]["rules"][8]["outbound"] = "nonexistent-group"
 
 
+def m_ai_default_dangling(cfg):
+    """组默认项指向一个不存在的 tag。
+
+    2026-10-19 审查 P1-A 的现场：骨架里 🤖 AI 写着 default="Node-01"，
+    而 mknode 删占位节点时只清了组员数组、没清 default ——
+    于是产物带一个悬空 default，check 全绿但 run 立刻 FATAL：
+      selector[🤖 AI]: default outbound not found: Node-01
+
+    这条用例保证 `default_dangling` 门禁真的会响。
+    """
+    _by_tag(cfg, "🤖 AI")["default"] = "ghost-node"
+
+
 def m_dangling_group_ref(cfg):
     """组自身引用一个不存在的出站（dangling_ref 管的是这一类）。"""
     _by_tag(cfg, "🤖 AI")["outbounds"] = ["Node-01", "ghost-node"]
@@ -276,6 +289,7 @@ CASES = [
     ("group-missing",             m_group_missing,             "template_profile_group_missing", "ERROR", "repo"),
     ("unknown-group",             m_unknown_group,             "profile_group_not_in_template",  "ERROR", "repo"),
     ("dangling-group-ref",        m_dangling_group_ref,        "dangling_ref",                   "ERROR", "single"),
+    ("ai-default-dangling",      m_ai_default_dangling,       "default_dangling",               "ERROR", "single"),
     ("dangling-rule-outbound",    m_dangling_outbound,         "rule_outbound_missing",          "ERROR", "single"),
     ("dns-ad-without-whitelist",  m_dns_ad_without_whitelist,  "dns_ad_without_whitelist",       "ERROR", "single"),
     ("dns-ad-action-route",       m_dns_ad_action_route,       "dns_ad_target",                  "ERROR", "single"),

@@ -110,7 +110,7 @@ fi
 #    （L34：门禁按早已不用的字面量匹配，永远不响，而 audit 一直是绿的）。
 NEG_RC=0
 if [ -x "$ROOT/tools/negtest.py" ] || [ -f "$ROOT/tools/negtest.py" ]; then
-  echo "── [3/5] 门禁负向回归（故意改坏 66 处，确认门禁会响）──────────"
+  echo "── [3/5] 门禁负向回归（故意改坏配置，确认门禁会响）──────────"
   "$PY" tools/negtest.py
   NEG_RC=$?
   echo

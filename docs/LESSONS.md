@@ -289,7 +289,7 @@ tag 一直是 `dns-bootstrap` / `dns-cn` / `dns-proxy`，**该门禁永远不可
 ## L9 出站骨架与引用完整性
 **现象/风险**
 
-分流组骨架被改错（Proxy 不是 urltest、AI 被改成 selector、AD 被塞代理节点），
+分流组骨架被改错（Proxy 不是 urltest、AI 被改回 urltest、AD 被塞代理节点），
 组里嵌组（`AI.outbounds` 里放 `Proxy`，两个 urltest 串联测速），
 或引用了不存在的 tag —— 这类错误 `check` 不会报，运行时才炸或静默失效。
 
@@ -316,7 +316,8 @@ tag 一直是 `dns-bootstrap` / `dns-cn` / `dns-proxy`，**该门禁永远不可
 **修法**
 
 骨架固定在 `templates/groups.json`；每个 profile 的出站必须与它一致，只往 `outbounds` 数组里加节点 tag。
-- `Proxy` 与 `AI` **都是 urltest**，各自在组内节点间独立优选；`AI` 只放用户指定给 AI 的节点（如全部台湾节点）。
+- `Proxy` 是 **urltest**（组内独立测速优选）；`AI` 是 **selector**（手动切节点，不自动优选，见 D25）。
+  `AI` 只放用户指定给 AI 的节点（如全部台湾节点）。
 - `Proxy` / `AI` / `AD` 的 `outbounds` 里**只允许出现真实节点 tag**，不得引用其它组。
 - 骨架模板 `templates/groups.json` 里 `Proxy` / `AI` 的 `outbounds` 允许为空（占位），
   自行生成的 profile 里为空则报 WARN `empty_group_skeleton`。
@@ -2172,6 +2173,61 @@ FileNotFoundError: [Errno 2] No such file or directory:
 
 ---
 
+## L51 门禁全绿、`check` 也过，但配置**启动即 FATAL** —— 组默认项成了悬空引用
+
+**现象**：2026-10-19 外部审查实测。走 README §2 的原命令生成配置：
+
+- `mknode.py` → `[OK] 门禁全绿`，退出码 `0`
+- `sing-box check -c local/desktop.json` → 退出码 `0`
+- `sing-box run -c <同一份>` → **立刻 FATAL**：
+
+```
+FATAL[0000] start service: start outbound: start endpoint/selector[🤖 AI]: default outbound not found: Node-01
+```
+
+**影响面不是个案**：`-g proxy` / `-g ai` × tag 叫 `Node-01` / `HK-01` / `TW-01`，
+实测生成的**全部**配置都同一 FATAL。也就是说当时的 `mknode.py` 产出的**每一份**配置都起不来。
+
+**根因**（三处叠加，缺一不可）：
+
+1. 骨架 `templates/groups.json` 里 `🤖 AI` 写着 `"default": "Node-01"`（指向占位节点）。
+2. `mknode.py` 删占位节点时**只清了组员数组 `outbounds`，没清组默认项 `default`** ——
+   而同一段的注释自己写着「否则留下悬空引用」。
+3. `audit.py` 的 `dangling_ref` **只覆盖 `outbounds` 数组**，不覆盖 `selector.default`；
+   `template_ai_no_default` 又只审**骨架**（那里 `default` 合法），不审**产物**。
+   ⇒ 静态门禁对这一条**结构上没有检查点**，67 个负向用例里也没有对应样本。
+
+**为什么启动级没拦住**：那一层当时在中文 Windows 下被编码问题静默吞掉了（见 L52）。
+两条缺陷叠在一起才是「假绿灯」：
+
+```
+mknode 不带 --run              → 只跑静态层
+静态层没有这条检查点            → 不报
+唯一能抓它的启动层被编码吞掉     → 也不报
+⇒ [OK] 门禁全绿
+```
+
+**修法**：
+
+- `mknode.py`：删占位节点时同步删掉「**指向被删占位 tag** 的 `default`」
+  （只删这一种 —— 🚫 AD 的 `default: "block"` 指向内置出站，必须原样留着）。
+- `audit.py`：新增门禁 `default_dangling` —— `selector.default` 必须指向存在的 tag
+  或内置出站（`block` / `direct`），**骨架和产物都查**。
+- `negtest.py`：加负向用例 `ai-default-dangling`，确保这条门禁**真的会响**。
+
+**判据（可复用的）**：
+
+> `check` 只反序列化、不初始化；**凡是「运行时才解析的引用」它一律不报。**
+> 引用完整性检查要问一句：**我覆盖的是「数组里的引用」还是「全部引用位」？**
+> 只查数组会漏掉标量字段（`default` / `detour` / `domain_resolver` …）。
+
+**同类**：L48（三处「值缺失 ⇒ 门禁静默」）、L50（凭据性字段靠默认值）。
+本条是同一族的第三例：**「字段存在」不等于「字段指向的东西存在」。**
+
+**门禁**：`default_dangling`
+
+---
+
 ## L50 四道门禁全绿的配置，节点却永远连不上 —— 凭据性的字段靠默认值
 
 **现象**：2026-10-14，用户给了一个自建 HTTP 代理节点
@@ -2222,6 +2278,8 @@ FileNotFoundError: [Errno 2] No such file or directory:
 那要新增一条真网络依赖，尚未实现。当前的对策是：**把自检命令写进文档，让人能自己查**。
 
 **门禁**：`tls_insecure_implicit`
+
+**门禁**：`default_dangling`
 
 ---
 
