@@ -488,7 +488,7 @@
   3. **把负向样本写成 pytest 用例**——否决。仓库没有 Python 测试基设（无 `pyproject.toml`），
      引入 pytest 是一次工具链升级；而当前需求只是一个「能跑、能报错、零依赖」的脚本。
 - **前提/风险**：
-  1. `negtest.py` 里有 2 个用例必须写**真实仓库文件**（`repo` 作用域）才能触发对账类门禁，
+  1. `negtest.py` 里有 3 个用例必须写**真实仓库文件**（`repo` 作用域）才能触发对账类门禁
      用 `try/finally` + 字节比对保证还原；若进程被硬杀可能留下脏工作区。
      代价换来的能力：能验证 `template_profile_group_missing` / `doc_group_name_stale` 这类
      「必须与真实文件对账」的门禁（临时文件根本触发不了，`_load_profiles()` 读真实路径）。

@@ -114,6 +114,15 @@ DOC_MUTATIONS = {
         "\n\n"
         "# (用例名, 破坏函数, 期望的 code, 期望级别, 作用范围)",
     ),
+    # ── 散文类：用例数硬编码 ────────────────────────────────────
+    # 第四轮复核 P3：「用例数不写进任何文本」这条规则此前只写在注释里，
+    # 而注释下面一行就写了数字、且已经漂了。这条把它做成会响的东西。
+    # 注入一个**当前值**说法（不带历史语气词）⇒ 应报 prose_case_count_stale。
+    "prose-case-count-stale": (
+        "docs/EXPERIENCES.md",
+        "所以每道门禁还必须有一个**负向用例**",
+        "目前实测是 999 个用例。所以每道门禁还必须有一个**负向用例**",
+    ),
 }
 
 
@@ -145,4 +154,7 @@ def cases():
          "decision_references_unknown", "ERROR", "doc"),
         ("tool-selftest-failed", "m_tool_selftest_failed",
          "tool_selftest_failed", "ERROR", "doc"),
+        # 第四轮复核 P3：负向用例数不得硬编码在活文档/CI 里。
+        ("prose-case-count-stale", "m_prose_case_count",
+         "prose_case_count_stale", "ERROR", "doc"),
     ]

@@ -2684,6 +2684,10 @@ def audit_template_text(rep: Report):
         )
 
 
+# 让 tools/ 下的门禁模块可被 import（gate_prose_case_count 等）。
+if str(ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tools"))
+
 def _tracked_files():
     """返回「仓库里应当被文本级门禁扫描的文件」清单。
 
@@ -3241,6 +3245,42 @@ def main():
     if not lessons_rep.ok():
         failed = True
 
+    # 活文档/CI 里对**当前**用例数的硬编码陈述（2026-10-19 第四轮复核 P3）。
+    # 单独跑一次：它扫全仓活文档，不属于任何单个配置文件。
+    # 判据见 tools/gate_prose_case_count.py（历史记述豁免、门禁自身排除）。
+    case_rep = Report("tools/gate_prose_case_count.py")
+    if not args.config_only:
+        try:
+            import gate_prose_case_count as _gpc
+            _found = _gpc.scan(_tracked_files(), ROOT)
+        except (ImportError, OSError) as _ex:
+            _found = None
+            case_rep.error(
+                "prose_case_count_scanner_missing",
+                f"扫查模块 import 失败：{_ex!r} —— 这条检查曾静默失效过，故失败必须报错",
+            )
+        if _found is not None:
+            if not _found:
+                case_rep.info(
+                    "prose_case_count_clean",
+                    "活文档/CI 里没有对**当前**用例数的硬编码陈述",
+                )
+            for _f, _ln, _got, _ctx in _found[:20]:
+                case_rep.error(
+                    "prose_case_count_stale",
+                    f"{_f}:{_ln} 硬编码了当前的负向用例数 {_got!r}…{_ctx}…"
+                    "——数字会漂且没人会发现它漂了（第四轮复核 P3）。"
+                    "请去掉数字（改成「以 negtest 自身输出为准」）；"
+                    "若在记述当时的事实，请补「当时/曾」等历史语气词（那类豁免）",
+                    where=f"{_f}:{_ln}",
+                )
+    if case_rep.items and not args.json:
+        for lv, code, msg, where in case_rep.items:
+            print(f"[{lv[0]}] prose-case-count: {msg}" + (f"   ← {where}" if where else ""))
+    if not case_rep.ok():
+        failed = True
+
+
     # 新功能采纳台账是仓库级校验（不依赖具体配置），单独跑一次
     newfeat_rep = Report("docs/version-matrix.json")
     if not args.config_only:
@@ -3437,6 +3477,10 @@ def main():
         (cov_rep, {"template-coverage"}),
         (probe_rep, {"matrix-paths"}),
         (doc_rep, {"doc-group-names"}),
+        # ⚠️ 新加的全仓检查**必须登记进这里**，否则它不进 --json 输出，
+        #    而负向用例（_audit_codes 读 --json）就永远看不到它会响 ——
+        #    表现为「用例假失败」，也会让 CI 的 --json 消费者漏掉这条。
+        (case_rep, {"prose-case-count"}),
     ]
     if args.json:
         all_results = ledger_results + results

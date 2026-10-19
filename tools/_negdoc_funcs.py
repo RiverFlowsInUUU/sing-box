@@ -63,3 +63,7 @@ def m_decision_references_unknown(cfg):
 
 def m_tool_selftest_failed(cfg):
     """工具自检失败（此处是破坏 negtest 的反向对账）。"""
+
+
+def m_prose_case_count(cfg):
+    """活文档里硬编码了当前的负向用例数。判据在 DOC_MUTATIONS（改真实文件）。"""
