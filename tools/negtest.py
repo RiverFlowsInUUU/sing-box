@@ -112,61 +112,104 @@ def _install_safety_net():
 _install_safety_net()
 
 
-def _guard_against_leftover_dirty():
-    """开跑前自检：上轮若被硬杀留下脏文件，先恢复。
+def _watched_paths():
+    """「会被负向用例改动」的真实文件清单 —— 从代码算，不手写。
 
-    不静默修复 —— 显式打印，因为「上轮被杀」本身是值得知道的事实。
-    git 不可用时跳过并说明，不假装检查过。
+    第五轮复核 P2-A：手写 3 个，实际 6 个 —— 漏掉的 3 个不告警也不恢复。
+    手抄一份会漂的副本，正是 L52「判据与待检特征同源」禁止的做法。
     """
-    watched = [
-        "profiles/1.14/android-lazy.json",
-        "docs/version-matrix.json",
-        "docs/EXPERIENCES.md",
-    ]
+    watched = {
+        str(BASE.relative_to(ROOT)).replace(chr(92), "/"),
+        str(MATRIX.relative_to(ROOT)).replace(chr(92), "/"),
+    }
     try:
-        r = subprocess.run(
-            ["git", "status", "--porcelain", "--"] + watched,
-            cwd=str(ROOT), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=20,
-        )
-    except (OSError, subprocess.SubprocessError):
-        print("  ⚠️ git 不可用 —— 跳开跑前自检（无法判断上轮是否留了脏文件）")
+        watched.update(DOC_MUTATIONS_TARGETS)
+    except NameError:
+        pass
+    return sorted(watched)
+
+
+BASELINE = ROOT / "local" / ".negtest-baseline.json"
+
+
+def _save_baseline():
+    """开跑前：记下「将被改的文件」此刻的内容。
+
+    ⚠️ 判据必须是「相对**上次开跑时**」，不能用「相对 git 脏」——
+       后者包含开发者自己的正常编辑，而 tools/negtest.py 就在清单里，
+       会形成「只要在改 negtest 就没法跑 negtest」的死循环（实测踩到：
+       应用改动 → 跑一次 → 改动被 git checkout 冲掉）。
+    """
+    data = {}
+    for rel in _watched_paths():
+        try:
+            # ⚠️ newline="" —— 保持行尾原样。默认会做 CRLF 转换，
+            #    恢复时写回 CRLF 就触发本仓门禁「绕过 patch-text 裸写」的指纹（实测踩到）。
+            with (ROOT / rel).open(encoding="utf-8", newline="") as fh:
+                data[rel] = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+    try:
+        BASELINE.parent.mkdir(parents=True, exist_ok=True)
+        BASELINE.write_text(json.dumps(data, ensure_ascii=False),
+                            encoding="utf-8")
+    except OSError:
+        pass          # 记不下基线不致命：只是失去一层保护
+
+
+def _clear_baseline():
+    try:
+        BASELINE.unlink()
+    except OSError:
+        pass
+
+
+def _guard_against_leftover_dirty():
+    """开跑前自检：上轮若被硬杀留下脏文件，用**上次开跑时的基线**恢复。
+
+    ⚠️ 为什么不能用「相对 git 脏」（实测踩到的死循环）：
+       tools/negtest.py 在监视清单里（tool-selftest-failed 会改它），
+       而「我正在编辑 negtest.py」本身就让它相对 git 是 M ——
+       自检于是把**我的编辑**当成「上轮残留」git checkout 掉。
+
+    ✅ 用「上次开跑时记下的内容」作判据就不会误判：
+       我总是先编辑再跑，所以基线里存的就是我编辑后的内容。
+    """
+    if not BASELINE.exists():
         return
-    if r.returncode != 0:
-        print("  ⚠️ git status 失败 —— 跳开跑前自检")
+    try:
+        data = json.loads(BASELINE.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        _clear_baseline()
         return
-    dirty = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    dirty = []
+    for rel, want in data.items():
+        try:
+            with (ROOT / rel).open(encoding="utf-8", newline="") as fh:
+                now = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        if now != want:
+            dirty.append(rel)
     if not dirty:
+        _clear_baseline()
         return
-    print("  ⚠️ 检测到上一轮**未正常结束**留下的改动（很可能是被硬杀）：")
-    for ln in dirty:
-        print(f"       {ln.rstrip()}")
-    print("     → 先恢复到 git 版本再开跑（否则相关用例会「找不到锚点」而假失败）")
-    try:
-        subprocess.run(
-            ["git", "checkout", "--"] + watched,
-            cwd=str(ROOT), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=20, check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    print("  ⚠️ 检测到上一轮**未正常结束**留下改动（很可能是被硬杀）：")
+    for rel in dirty:
+        print("       %s" % rel)
+    print("     → 用上次开跑时的基线内容恢复"
+          "（不是 git 版本 —— 那会吞掉你自己的编辑）")
+    for rel in dirty:
+        try:
+            # 同样 newline="" —— 恢复必须是字节级原样，不做任何换行转换
+            with (ROOT / rel).open("w", encoding="utf-8", newline="") as fh:
+                fh.write(data[rel])
+        except OSError:
+            pass
+    _clear_baseline()
 
 
 
-# Windows 上 stdout 重定向到管道/文件时，Python 默认用 GBK，本文件到处是 emoji
-# （✅/❌），一 `| tee` 就 UnicodeEncodeError 崩掉 —— 而「管道里崩」恰恰是
-# 「本地绿、CI 红」这一类问题的温床（同 L30 的思路：输出编码也是环境依赖）。
-for _s in (sys.stdout, sys.stderr):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError):      # 老 Python / 已被包装的流
-        pass
-
-
-# ──────────────────────────────────────────────────────────────────────
-# 用例：每个函数接受 profile 的 dict（深拷贝后的），就地破坏它。
-# 第一条必须能触发第二条的 code（在 CASES 里登记）。
-# ──────────────────────────────────────────────────────────────────────
 def _by_tag(cfg, tag):
     return next(o for o in cfg["outbounds"] if o.get("tag") == tag)
 
@@ -723,6 +766,7 @@ def main():
         return 2
 
     _guard_against_leftover_dirty()      # 上轮被硬杀的话先恢复
+    _save_baseline()                     # 记下此刻内容，供下次开跑比对
 
     print("═" * 68)
     print("  门禁负向回归：每个用例故意改坏一处，期望对应门禁报出指定 code")
@@ -762,6 +806,7 @@ def main():
                 bad.append((name, expect))
     finally:
         shutil.rmtree(NEGDIR, ignore_errors=True)
+        _clear_baseline()          # 所有用例都已归还 → 基线不再需要
 
     print("═" * 68)
     if bad:
