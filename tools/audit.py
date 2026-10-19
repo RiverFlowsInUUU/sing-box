@@ -3252,7 +3252,26 @@ def main():
     if not args.config_only:
         try:
             import gate_prose_case_count as _gpc
-            _found = _gpc.scan(_tracked_files(), ROOT)
+            # 真值：从 negtest 源码数 CASES 的条目数（不跑 negtest，避免递归）。
+            _n_cases = None
+            try:
+                _nt = (ROOT / "tools" / "negtest.py").read_text(encoding="utf-8")
+                _blk = re.search(r"^CASES\s*=\s*\[(.*?)^\]", _nt, re.S | re.M)
+                if _blk:
+                    _n_cases = len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"',
+                                              _blk.group(1), re.M))
+                    # doc 组用例是从别处 append 进来的，单独数
+                    _dm = (ROOT / "tools" / "negdoc_mutations.py").read_text(
+                        encoding="utf-8")
+                    _n_cases += len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"\s*,',
+                                               _dm, re.M))
+                    _ncf = (ROOT / "tools" / "_negcfg_funcs.py").read_text(
+                        encoding="utf-8")
+                    _n_cases += len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"\s*,',
+                                               _ncf, re.M))
+            except (OSError, UnicodeDecodeError):
+                _n_cases = None
+            _found = _gpc.scan(_tracked_files(), ROOT, actual_count=_n_cases)
         except (ImportError, OSError) as _ex:
             _found = None
             case_rep.error(
@@ -3263,15 +3282,26 @@ def main():
             if not _found:
                 case_rep.info(
                     "prose_case_count_clean",
-                    "活文档/CI 里没有对**当前**用例数的硬编码陈述",
+                    "活文档/CI 里没有把当前的负向用例数当成常量写下来"
+                    + ("" if _n_cases is None else f"（真值 {_n_cases}）"),
                 )
-            for _f, _ln, _got, _ctx in _found[:20]:
+            _WHY_MSG = {
+                "assert_current":
+                    "用了「实测是/目前是/现在是 N」这类**显式声称当前值**的措辞"
+                    "——这类句子里的数字一定会漂，且没人会发现它漂了",
+                "increased":
+                    "用了「已增至 N」这类当前口吻的措辞"
+                    "——同上，数字会漂",
+                "count_mismatch":
+                    "写了「N 个用例」而 N 与真值不符"
+                    "——计数措辞 + 真值可算是可以自动核对的",
+            }
+            for _f, _ln, _got, _ctx, _why in _found[:20]:
                 case_rep.error(
                     "prose_case_count_stale",
-                    f"{_f}:{_ln} 硬编码了当前的负向用例数 {_got!r}…{_ctx}…"
-                    "——数字会漂且没人会发现它漂了（第四轮复核 P3）。"
-                    "请去掉数字（改成「以 negtest 自身输出为准」）；"
-                    "若在记述当时的事实，请补「当时/曾」等历史语气词（那类豁免）",
+                    f"{_f}:{_ln} 把负向用例数当常量写下来了（{_got!r}）…{_ctx}…"
+                    f"——{_WHY_MSG.get(_why, _why)}。"
+                    "请去掉数字，改成「以 negtest 自身输出为准」",
                     where=f"{_f}:{_ln}",
                 )
     if case_rep.items and not args.json:
