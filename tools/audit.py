@@ -18,6 +18,7 @@ audit.py — sing-box 配置门禁（离线结构化审查 + 可选调用 sing-b
 退出码：0 = 通过（可能带 WARN）；1 = 有 ERROR；2 = 脚本自身用法错误。
 """
 
+import ast as _ast
 import argparse
 import json
 import os
@@ -2897,6 +2898,29 @@ def audit_doc_group_names(rep: Report):
         )
 
 
+def _has_stdout_guard(path):
+    """源码里是否存在**在执行**的 `sys.stdout.reconfigure(...)` 调用。
+
+    用 AST 而不是 `"..." in text`：注释掉的守卫字符串仍在，但不在 AST 里。
+    （第八轮复核 P3-1：把守卫注释掉 → 旧判据照样报「都有守卫」。）
+    """
+    try:
+        tree = _ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return False
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        f = node.func
+        if not isinstance(f, _ast.Attribute) or f.attr != "reconfigure":
+            continue
+        v = f.value
+        if (isinstance(v, _ast.Attribute) and v.attr == "stdout"
+                and isinstance(v.value, _ast.Name) and v.value.id == "sys"):
+            return True
+    return False
+
+
 def audit_stdout_guard(rep: Report):
     """所有「会打印非 ASCII」的 tools/*.py 必须有 stdout 编码守卫。
 
@@ -2912,7 +2936,6 @@ def audit_stdout_guard(rep: Report):
     判据：>50 行、且有 print 的 tools/*.py 必须含 `stdout.reconfigure`。
     （拦截线放在 50 行：短脚本/纯库模块不打印，不需要。）
     """
-    GUARD = "sys.stdout.reconfigure"
     missing = []
     tdir = ROOT / "tools"
     if not tdir.is_dir():
@@ -2926,7 +2949,11 @@ def audit_stdout_guard(rep: Report):
             continue
         if "print(" not in text:
             continue
-        if GUARD not in text:
+        # ⚠️ 不能判「字符串出现过」—— 把那行**注释掉**（比删掉更常见）
+        #    照样满足，而脚本在 cp936 + 管道下真的会崩
+        #    （第八轮复核 P3-1 实测复现了第七轮那条假红）。
+        #    用 AST 判「这个调用**在执行**」—— 注释不进 AST，天然识别。
+        if not _has_stdout_guard(p):
             missing.append(p.name)
     if not missing:
         rep.info("stdout_guard_ok",
