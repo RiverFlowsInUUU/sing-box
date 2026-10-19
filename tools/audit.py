@@ -3252,24 +3252,48 @@ def main():
     if not args.config_only:
         try:
             import gate_prose_case_count as _gpc
-            # 真值：从 negtest 源码数 CASES 的条目数（不跑 negtest，避免递归）。
+            # 真值：用 ast 数「列表元素的个数」——
+            # ⚠️ 不要用正则数源码：字符类收不全用例名的字符（下划线就漏），
+            #    而**真值算错会让 ③ 判据假报**（把正确句子判成 count_mismatch）。
+            #    第六轮复核 P3-3 实测：用例名改带下划线 → 33 变 32。
+            #    ast 只数元素个数，不看元素内容，不受名字形式影响。
             _n_cases = None
             try:
-                _nt = (ROOT / "tools" / "negtest.py").read_text(encoding="utf-8")
-                _blk = re.search(r"^CASES\s*=\s*\[(.*?)^\]", _nt, re.S | re.M)
-                if _blk:
-                    _n_cases = len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"',
-                                              _blk.group(1), re.M))
-                    # doc 组用例是从别处 append 进来的，单独数
-                    _dm = (ROOT / "tools" / "negdoc_mutations.py").read_text(
-                        encoding="utf-8")
-                    _n_cases += len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"\s*,',
-                                               _dm, re.M))
-                    _ncf = (ROOT / "tools" / "_negcfg_funcs.py").read_text(
-                        encoding="utf-8")
-                    _n_cases += len(re.findall(r'^\s*\(\s*"[a-z0-9\-]+"\s*,',
-                                               _ncf, re.M))
-            except (OSError, UnicodeDecodeError):
+                import ast as _ast
+                _total = 0
+                _ok = True
+                # 三处用例的存放形式**不同**（实测确认）：
+                #   negtest.py          CASES = [ ... ]              顶层列表
+                #   _negcfg_funcs.py    CASES = [ ... ]              顶层列表
+                #   negdoc_mutations.py def cases(): return [ ... ]  函数返回
+                for _fname in ("negtest.py", "negdoc_mutations.py",
+                               "_negcfg_funcs.py"):
+                    _p = ROOT / "tools" / _fname
+                    if not _p.exists():
+                        continue
+                    _tree = _ast.parse(_p.read_text(encoding="utf-8"))
+                    _found_var = False
+                    for _node in _ast.walk(_tree):
+                        # 形如 X = [ ... ]
+                        if isinstance(_node, _ast.Assign):
+                            for _t in _node.targets:
+                                if getattr(_t, "id", None) == "CASES" and \
+                                        isinstance(_node.value, _ast.List):
+                                    _total += len(_node.value.elts)
+                                    _found_var = True
+                        # 形如 def cases(): return [ ... ]
+                        if isinstance(_node, _ast.FunctionDef) and \
+                                _node.name == "cases":
+                            for _sub in _ast.walk(_node):
+                                if isinstance(_sub, _ast.Return) and \
+                                        isinstance(_sub.value, _ast.List):
+                                    _total += len(_sub.value.elts)
+                                    _found_var = True
+                    if not _found_var:
+                        _ok = False
+                if _ok:
+                    _n_cases = _total
+            except (OSError, UnicodeDecodeError, SyntaxError):
                 _n_cases = None
             _found = _gpc.scan(_tracked_files(), ROOT, actual_count=_n_cases)
         except (ImportError, OSError) as _ex:
@@ -3286,6 +3310,12 @@ def main():
                     + ("" if _n_cases is None else f"（真值 {_n_cases}）"),
                 )
             _WHY_MSG = {
+                "ratio_mismatch":
+                    "在**当前口吻**（现在/目前/本轮…）的句子里写了比率 X/Y，"
+                    "而分母 ≠ 真值 —— 比率的分母就是用例数，它一定会漂",
+                "count_mismatch":
+                    "写了「N 个用例 / N 个 case / N 条」而 N 与真值不符"
+                    "——计数措辞 + 真值可算是可以自动核对的",
                 "assert_current":
                     "用了「实测是/目前是/现在是 N」这类**显式声称当前值**的措辞"
                     "——这类句子里的数字一定会漂，且没人会发现它漂了",

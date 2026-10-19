@@ -122,10 +122,30 @@ def _watched_paths():
         str(BASE.relative_to(ROOT)).replace(chr(92), "/"),
         str(MATRIX.relative_to(ROOT)).replace(chr(92), "/"),
     }
-    try:
-        watched.update(DOC_MUTATIONS_TARGETS)
-    except NameError:
-        pass
+    # ⚠️ **不能**写成 `try: watched.update(DOC_MUTATIONS_TARGETS) except NameError: pass`。
+    #    那正是让我静默两轮提交的写法（第六轮复核 P3-2 实测复现）：
+    #    定义行一改名 → 清单从 6 个悄悄变 2 个，而全套 69/69 照样全绿、零提示。
+    #    ——「用 except: pass 前问一句：它会不会把『我做错了』也一起吞掉？」
+    #    这条教训我自己写进了上一轮报告，然后**原样留着那行代码**。
+    #    现在缺定义就**报错**，不降级。
+    if "DOC_MUTATIONS_TARGETS" not in globals():
+        raise RuntimeError(
+            "❗ DOC_MUTATIONS_TARGETS 未定义 —— 开跑前自检的监视清单会悄悄缩水，"
+            "而被硬杀时那些文件就不会被恢复。"
+            "请检查 negdoc_mutations 的 import 与 DOC_MUTATIONS_TARGETS 的定义行。"
+        )
+    watched.update(DOC_MUTATIONS_TARGETS)
+
+    # 条数断言：把它变成**会响的东西**（复核建议）。
+    # 少了就报错 —— 覆盖面的缩水不该由人肉「插完打印一次」来发现。
+    _MIN_EXPECTED = 5          # BASE + MATRIX + doc 表里至少 3 个不同的目标
+    if len(watched) < _MIN_EXPECTED:
+        raise RuntimeError(
+            f"❗ 开跑前自检的监视清单只有 {len(watched)} 个文件（至少要 "
+            f"{_MIN_EXPECTED} 个）：{sorted(watched)}。"
+            "清单缩水意味着被硬杀时这些文件不会被恢复 —— "
+            "新增/改名用例时请同步检查 DOC_MUTATIONS。"
+        )
     return sorted(watched)
 
 
