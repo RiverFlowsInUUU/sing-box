@@ -2915,9 +2915,22 @@ def _has_stdout_guard(path):
         if not isinstance(f, _ast.Attribute) or f.attr != "reconfigure":
             continue
         v = f.value
-        if (isinstance(v, _ast.Attribute) and v.attr == "stdout"
+        if not (isinstance(v, _ast.Attribute) and v.attr == "stdout"
                 and isinstance(v.value, _ast.Name) and v.value.id == "sys"):
-            return True
+            continue
+        # ⚠️ 光有这次调用还不够 —— 第九轮复核 P3-②：`sys.stdout.reconfigure()`
+        #    （无参数）照样「判定有守卫」，而脚本在 cp936 + 管道下**真的会崩**
+        #    （复核实测，我复现：UnicodeEncodeError ×1）。
+        #    必须要求这次调用带了 encoding 关键字。
+        for kw in node.keywords:
+            if kw.arg != "encoding":
+                continue
+            # 值必须是 utf-8 字面量（'utf-8' / 'utf8' / 'UTF-8' …）
+            if isinstance(kw.value, _ast.Constant):
+                val = str(kw.value.value).lower().replace("-", "").replace("_", "")
+                if val == "utf8":
+                    return True
+        # 有调用但没把 encoding 定成 utf-8 → 不算有守卫
     return False
 
 
@@ -2933,7 +2946,9 @@ def audit_stdout_guard(rep: Report):
     「负向回归 exit=1 —— 有门禁成了死检查（不会响）」，
     **这个结论是错的**（门禁没坏，是脚本自己崩）。假红比没检查更糟。
 
-    判据：>50 行、且有 print 的 tools/*.py 必须含 `stdout.reconfigure`。
+    判据：>50 行、且有 print 的 tools/*.py 必须有**在执行**的
+    `sys.stdout.reconfigure(encoding="utf-8", ...)` 调用
+    （用 AST 判，且校验 encoding 关键字为 utf-8 —— 见 `_has_stdout_guard`）。
     （拦截线放在 50 行：短脚本/纯库模块不打印，不需要。）
     """
     missing = []
@@ -3342,7 +3357,6 @@ def main():
             #    ast 只数元素个数，不看元素内容，不受名字形式影响。
             _n_cases = None
             try:
-                import ast as _ast
                 _total = 0
                 _ok = True
                 # 三处用例的存放形式**不同**（实测确认）：
