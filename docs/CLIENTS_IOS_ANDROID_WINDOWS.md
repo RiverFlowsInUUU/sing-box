@@ -131,7 +131,7 @@ python tools/diff_config.py <我的原始配置.json> <你改完的.json>
 1. **节点分享链接**（可多个）：`vless://` `vmess://` `trojan://` `hysteria2://` `ss://` …
 2. **落点分流组**：代理组（普通外网）/ 智能组（AI 类网站走更干净的出口）
 3. **目标平台**：Android / iOS / Windows
-4. **智能组要放哪些节点**（智能组与代理组是**两个独立的 urltest 组**，各自在组内优选；
+4. **智能组要放哪些节点**（代理组是 urltest 自动优选，智能组是 selector 手动切；
    我不说就先把所有代理节点都放进去，**不要**用代理组当子节点）
 
 **缺哪个就问，不要自己猜。** 我只说「A 放智能组」，那就只动智能组。
@@ -161,7 +161,7 @@ cat singbox_version.txt          # 例如 1.14.3   2026-10-12
 1. 在 `outbounds[]` 追加节点对象，`tag` 用可读名，且**不得与既有 tag 重复**
    （三个分流组 tag 与 `direct` `block` 都是保留名）。
 2. 把新 tag 加进目标分流组的 `outbounds` 数组。
-   代理组与智能组都是 urltest，加进去即自动测速 —— **不再有单独的 Auto 组**；
+   代理组是 urltest（加进去即自动测速），智能组是 selector（手动切，不自动优选）—— **不再有单独的 Auto 组**；
    两个组的 `outbounds` 里**只放真实节点，不要嵌套组 tag**。
 3. **不要动** `route.rules`、`dns`、`inbounds`、`rule_set`，除非我另外要求。
    规则集与规则顺序是**固定骨架**：`jinx-direct` → `jinx-ads` → `awanue-ads` → `geosite-cn`，

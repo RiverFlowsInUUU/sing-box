@@ -41,7 +41,7 @@ jobs:
           SINGBOX_BIN: /usr/local/bin/sing-box
         run: python tools/audit.py --run --run-seconds 20
 
-      - name: 门禁负向回归（故意改坏 66 处，确认门禁真的会响）
+      - name: 门禁负向回归（故意改坏配置，确认门禁真的会响）
         run: python tools/negtest.py
       - name: 改文件方式指纹（BOM / NUL / 行尾）
         run: |
@@ -99,7 +99,7 @@ jobs:
           echo "  · 模板覆盖对账（templates/groups.json ⟺ 三份 profile 的分流组与类型）—— template_profile_group_missing / template_profile_group_type / profile_group_not_in_template"
           echo "  · 散文旧组名扫查（全仓 .md/.json/.py 的组名引用位）—— doc_group_name_stale"
           echo
-          echo "而 tools/negtest.py 反向验证这些门禁**真的会响**：故意改坏 28 处配置/文档/矩阵，"
+          echo "而 tools/negtest.py 反向验证这些门禁**真的会响**：故意改坏配置/文档/矩阵，"
           echo "每处必须报出对应的 code。一个门禁只有「干净时安静 + 破坏时会响」两件事同时"
           echo "成立才算数；不跑负向回归，改门禁就等于拆掉回归网（L34 就是这样埋出来的）。"
 

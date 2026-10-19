@@ -3369,19 +3369,25 @@ def main():
         # ★ 文件名推断不出平台时（空集），再看内容线索（2026-10-19 审查 P2-B）。
         #   光靠空集会在 `local/*.json` 上**漏检** —— 那些文件名可以是任意的。
         #   线索：配置里带 `strict_route` ⇒ 它按桌面语义写，
-        #   不该再拿「移动端不支持 strict_route」去报它。
-        #   （反向不成立：没有 strict_route 推不出是移动端，那属于空集 → 跳过。）
-        if not platforms:
-            try:
-                _probe = json.loads(t.read_text(encoding="utf-8-sig"))
-                if any(isinstance(ib, dict) and "strict_route" in ib
-                       for ib in (_probe.get("inbounds") or [])):
-                    platforms = {"desktop"}
-            except Exception:
-                pass   # 读不了/不是 JSON：留给正常流程去报错
+        #   ⚠️ 但**不能**用「带 strict_route ⇒ 它是桌面」这种线索 ——
+        #   那条门禁要抓的恰恰是「移动端配置带了 strict_route」，
+        #   拿它当判据等于在待检样本上把门禁自己关掉（自噬）。
+        #   正确做法：空集就明确报一条 WARN，让人知道平台专属检查被跳过了。
+        platform_unknown = not platforms
         # 骨架模板不是可运行配置，跳过 check / run
         is_template = t.resolve() == (ROOT / "templates" / "groups.json").resolve()
         rep = Report(str(t))
+        if platform_unknown:
+            # ★ 对齐「未指定 SINGBOX_BIN 时那条显式 WARN」的做法：
+            #   静默跳过比报错更危险 —— 用户以为查过了，其实没有。
+            rep.warn(
+                "platform_unknown",
+                f"无法从文件名 {t.name!r} 推断平台，"
+                "平台专属检查（strict_route / override_android_vpn / "
+                "include_all_networks 等）已**全部跳过**。"
+                "要精确检查请显式传 --platform desktop|android|ios，"
+                "或把文件名带上平台关键词。",
+            )
         try:
             cfg = json.loads(t.read_text(encoding="utf-8"))
         except json.JSONDecodeError as ex:

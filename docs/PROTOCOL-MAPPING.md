@@ -219,7 +219,7 @@ query 常见键：`sni`、`insecure`、`obfs`、`obfs-password`、`pinSHA256`、
 
 ## 3. 插入分流组（用户指定落点）
 
-三个组位置固定，**代理组与智能组都是 urltest**（不再有单独的 `Auto` 组）：
+三个组位置固定：**代理组是 urltest**（自动测速优选）、**智能组是 selector**（手动切节点，见 DECISIONS.md D25）（不再有单独的 `Auto` 组）：
 
 ```jsonc
 { "type": "urltest", "tag": "🚀 Proxy", "outbounds": ["Node-01", "..."],
