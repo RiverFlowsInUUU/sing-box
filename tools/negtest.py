@@ -732,6 +732,10 @@ def run_case_matrix(name, mutate, base_text, level):
 sys.path.insert(0, str(ROOT / "tools"))
 from _negdoc_runner import make_doc_runner          # noqa: E402
 from negdoc_mutations import DOC_MUTATIONS, cases as _negdoc_cases   # noqa: E402
+
+# 「doc 用例会改哪些真实文件」——从表里算，供开跑前自检用。
+# 第五轮复核 P2-A：手写清单漏了 3 个；从代码算才跟得上新增用例。
+DOC_MUTATIONS_TARGETS = sorted({v[0] for v in DOC_MUTATIONS.values()})
 import _negdoc_funcs as _ndf                                        # noqa: E402
 import _negcfg_funcs as _ncf                                        # noqa: E402
 
