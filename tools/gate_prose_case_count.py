@@ -75,8 +75,44 @@ COUNT = re.compile(
 )
 
 # ④ 比率写法 + 当前口吻词
+#
+# ⚠️ 第七轮复核 P3-2：只看「有当前口吻词 + 本行有 X/Y」会**过报**——
+#    「本轮（2026/10/19）复核完成」→ 把日期读成比率（分母 10 ≠ 真值）；
+#    「现在 1/2 命中」→ 把别的比率读成用例数。
+#    判据 ④ 的理由是「**比率的分母就是用例数**」，
+#    所以必须验证两件事，缺一不可：
+#      ③ 这个比率出现在**用例语境的子句**里（位置对）
+#      ① 数值形态像用例数：num ≤ den，且 den 在 [10, 999]（数值对）
 RATIO = re.compile(r"(\d{1,5})\s*/\s*(\d{1,5})")
-CURRENT_WORDS = ("现在", "目前", "当前", "本轮", "本次", "这次", "本次回归")
+CURRENT_WORDS = ("现在", "目前", "当前", "本轮", "本次", "这次")
+
+# 用例语境的子句词：比率必须与它同处一个子句，才算「在说用例数」
+CASE_CLAUSE_WORDS = ("用例", "negtest", "CASES", "负向回归", "负向用例",
+                     "全绿", "命中", "跑完", "跑出来")
+
+# 比率分母的合理区间（用例数不会是个位数，也不会到四位数）
+_RATIO_DEN_MIN = 10
+_RATIO_DEN_MAX = 999
+
+# 子句切分：中文句读 + 括号。「本轮（2026/10/19）复核完成」里
+# 日期在括号内、与「本轮」不同子句 → 天然被排除。
+_CLAUSE_SPLIT = re.compile(r"[，。；;、（）()「」\[\]]")
+
+
+def _clause_containing(line, pos):
+    """返回包含 pos 的那个子句。"""
+    start = 0
+    for m in _CLAUSE_SPLIT.finditer(line):
+        if m.end() <= pos:
+            start = m.end()
+        elif m.start() > pos:
+            break
+    end = len(line)
+    for m in _CLAUSE_SPLIT.finditer(line):
+        if m.start() > pos:
+            end = m.start()
+            break
+    return line[start:end]
 
 # ⚠️「全绿」必须在 CTX 里：本仓最自然的当前值写法是
 #   「现在跑出来是 68/68 全绿」—— 这句里没有「用例」二字。
@@ -140,6 +176,13 @@ def scan(tracked_files, root, actual_count=None):
             if hit is None and any(w in line for w in CURRENT_WORDS):
                 for m in RATIO.finditer(line):
                     num, den = int(m.group(1)), int(m.group(2))
+                    # ① 数值形态得像用例数
+                    if num > den or not (_RATIO_DEN_MIN <= den <= _RATIO_DEN_MAX):
+                        continue
+                    # ③ 这个比率必须与用例语境同处一个子句
+                    cl = _clause_containing(line, m.start())
+                    if not any(w in cl for w in CASE_CLAUSE_WORDS):
+                        continue
                     if den != actual_count:
                         hit = (m.group(0).strip(), "ratio_mismatch")
                         break

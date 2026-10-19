@@ -2897,6 +2897,53 @@ def audit_doc_group_names(rep: Report):
         )
 
 
+def audit_stdout_guard(rep: Report):
+    """所有「会打印非 ASCII」的 tools/*.py 必须有 stdout 编码守卫。
+
+    L37 记过这个坑：Windows 上 stdout 重定向到管道/文件时默认回退 GBK，
+    而本仓脚本到处是 ✅/❌，一 `| tee` 就 UnicodeEncodeError 崩掉。
+    修法是 `import` 后立即 `sys.stdout.reconfigure(encoding="utf-8")`。
+
+    ⚠️ 但 2026-10-19 的某次改写把 `negtest.py` 的那段守卫**整段删掉**，
+    而**没有任何门禁为它响** —— 后果是本机 cp936 下 `check-all.sh` 报
+    「负向回归 exit=1 —— 有门禁成了死检查（不会响）」，
+    **这个结论是错的**（门禁没坏，是脚本自己崩）。假红比没检查更糟。
+
+    判据：>50 行、且有 print 的 tools/*.py 必须含 `stdout.reconfigure`。
+    （拦截线放在 50 行：短脚本/纯库模块不打印，不需要。）
+    """
+    GUARD = "sys.stdout.reconfigure"
+    missing = []
+    tdir = ROOT / "tools"
+    if not tdir.is_dir():
+        return
+    for p in sorted(tdir.glob("*.py")):
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if len(text.splitlines()) < 50:
+            continue
+        if "print(" not in text:
+            continue
+        if GUARD not in text:
+            missing.append(p.name)
+    if not missing:
+        rep.info("stdout_guard_ok",
+                 "所有会打印的 tools/*.py 都有 stdout 编码守卫（L37）")
+        return
+    for name in missing:
+        rep.error(
+            "stdout_guard_missing",
+            f"tools/{name} 缺少 stdout 编码守卫 —— 本机 cp936 下被管道/重定向时"
+            "会 UnicodeEncodeError 崩掉，而调用方（如 check-all.sh）会把「脚本崩了」"
+            "误报成「门禁成了死检查」（假红）。"
+            "请在 import 后加：sys.stdout.reconfigure(encoding=\"utf-8\", errors=\"replace\")"
+            "（L37；其余同类模块都有这一行）",
+            where=f"tools/{name}",
+        )
+
+
 def audit_tools(rep: Report):
     """工具自检：让「工具」也被自己的门禁检查一道。
 
@@ -3248,6 +3295,15 @@ def main():
     # 活文档/CI 里对**当前**用例数的硬编码陈述（2026-10-19 第四轮复核 P3）。
     # 单独跑一次：它扫全仓活文档，不属于任何单个配置文件。
     # 判据见 tools/gate_prose_case_count.py（历史记述豁免、门禁自身排除）。
+    guard_rep = Report("tools/audit.py")
+    if not args.config_only:
+        audit_stdout_guard(guard_rep)
+    if guard_rep.items and not args.json:
+        for lv, code, msg, where in guard_rep.items:
+            print(f"[{lv[0]}] stdout-guard: {msg}" + (f"   ← {where}" if where else ""))
+    if not guard_rep.ok():
+        failed = True
+
     case_rep = Report("tools/gate_prose_case_count.py")
     if not args.config_only:
         try:
@@ -3541,6 +3597,7 @@ def main():
         #    而负向用例（_audit_codes 读 --json）就永远看不到它会响 ——
         #    表现为「用例假失败」，也会让 CI 的 --json 消费者漏掉这条。
         (case_rep, {"prose-case-count"}),
+        (guard_rep, {"stdout-guard"}),
     ]
     if args.json:
         all_results = ledger_results + results

@@ -20,6 +20,15 @@ diff_config.py — 逐叶子节点比对两份 sing-box 配置 JSON。
 
 import json
 import sys
+
+# L37：Windows 上 stdout 重定向到管道时默认回退 GBK，
+# 本文件到处是 ✅/❌，一 `| tee` 就 UnicodeEncodeError 崩掉
+# —— 管道里崩正是「本地绿、CI 红」的温床。故 import 后立即 reconfigure。
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, OSError):
+    pass          # 极端环境（无 stdout）下不影响主流程
+
 from pathlib import Path
 
 
