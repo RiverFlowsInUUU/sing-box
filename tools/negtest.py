@@ -32,6 +32,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 # L37：Windows 上 stdout 重定向到管道时默认回退 GBK，
 # 本文件到处是 ✅/❌，一 `| tee` 就 UnicodeEncodeError 崩掉
@@ -159,6 +160,8 @@ def _watched_paths():
 
 
 BASELINE = ROOT / "local" / ".negtest-baseline.json"
+# 被基线恢复覆盖掉的内容往这里留档（local/ 已 gitignore）。
+CLOBBER_DIR = ROOT / "local" / "_negtest-clobbered"
 
 
 def _save_baseline():
@@ -227,7 +230,21 @@ def _guard_against_leftover_dirty():
     for rel in dirty:
         print("       %s" % rel)
     print("     → 用上次开跑时的基线内容恢复"
-          "（不是 git 版本 —— 那会吞掉你自己的编辑）")
+          "（不取 git 版本：那会连带吞掉你自己的编辑）")
+    # ⚠️ 但「基线之后你新做的编辑」同样会被这一步覆盖 —— 这不是理论，实测踩到过：
+    #    上一轮被中断（基线留在盘上）→ 我改 tools/negtest.py 自身 →
+    #    下一次开跑先把我的改动恢复成基线版本，改动凭空消失；而提示只说
+    #    「很可能是被硬杀」，读起来完全不像「你的编辑没了」。
+    #    所以覆盖前**必须先另存**：把「静默丢失」降级成「可捡回」。
+    saved = []
+    for rel in dirty:
+        try:
+            dst = CLOBBER_DIR / rel.replace("/", "__")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / rel, dst)
+            saved.append((rel, dst))
+        except OSError:
+            saved.append((rel, None))
     for rel in dirty:
         try:
             # 同样 newline="" —— 恢复必须是字节级原样，不做任何换行转换
@@ -235,6 +252,12 @@ def _guard_against_leftover_dirty():
                 fh.write(data[rel])
         except OSError:
             pass
+    for rel, dst in saved:
+        if dst is None:
+            print(f"       ❗ {rel} 恢复前**没能另存**（写 local/ 失败）—— 这次是真的丢了")
+        else:
+            print(f"       恢复前的内容已另存：{dst.relative_to(ROOT)}"
+                  f"（若你在两次开跑之间改过 {rel}，从那里取回）")
     _clear_baseline()
 
 
@@ -768,9 +791,11 @@ def run_case_matrix(name, mutate, base_text, level):
         unregister_dirty(MATRIX)
         if MATRIX.read_bytes() != original:
             raise RuntimeError(f"❗ 还原 {MATRIX} 失败——请手工 git checkout 恢复")
-        # 探针留下的临时文件也要清掉：它在 local/_negtest/ 里虽不被扫，但会积垃圾。
+        # 探针的临时文件在**系统临时目录**（见 audit.py 的 audit_matrix_paths()）。
+        # 这里原先把路径写成 local/_negtest/.matrix-probe.json —— 探针搬家之后那个
+        # 文件就不存在了：清了个寂寞，真正的残留反而没人管。
         try:
-            (NEGDIR / ".matrix-probe.json").unlink()
+            (Path(tempfile.gettempdir()) / "sb-matrix-probe.json").unlink()
         except OSError:
             pass
 
