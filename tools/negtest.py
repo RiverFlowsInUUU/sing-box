@@ -559,6 +559,19 @@ LEDGER_CODES = {
 
 CONFIG_ONLY_SCOPES = {"single"}
 
+# 「这次根本没验」类 code —— 不是用例断言的对象，是 SkipCase 的判据。
+# 它们必须**无视 level** 地从 audit 输出里带出来（见 _audit_codes）。
+ENV_SKIP_CODES = {"matrix_probe_skipped"}
+
+# 判据依赖内核探针的 code —— 没装内核时这些用例一次都没跑，只能跳过。
+# ⚠️ 跳过与否的判据必须落在**用例要断言的那个 code**上，不能落在整个作用域上：
+# matrix 作用域里还有覆盖窗口那几条（coverage_*），它们的判据在纯文本层面、
+# 不需要内核，一起跳过等于白丢三道已经验过的门禁。
+PROBE_CODES = {
+    "matrix_path_unreachable", "matrix_path_unprobeable",
+    "matrix_path_ok", "matrix_version_mismatch",
+}
+
 
 def _assert_config_only_safe(name, expect, scope):
     """拦住「本该跑台账的用例被分到会跳过台账的作用域」——那会造成永久假绿。"""
@@ -596,10 +609,16 @@ def _audit_codes(path_or_none, level="ERROR", repo_args=(), no_check=True,
         raise RuntimeError(
             f"audit.py 的输出不是 JSON（rc={proc.returncode}）：{proc.stdout[:200]!r}"
         ) from None
-    return {
-        it.get("code") for rep in data for it in rep.get("items", [])
-        if it.get("level") == level
-    }
+    items = [it for rep in data for it in rep.get("items", [])]
+    codes = {it.get("code") for it in items if it.get("level") == level}
+    # ⚠️ 环境类 code（没装内核 ⇒ 探针没跑）**不能按 level 过滤**掉。
+    # 早先这里是「set 推导式 + level 过滤」一步到位，于是 ERROR 级用例永远看不到
+    # WARN 级的 matrix_probe_skipped —— `run_case_matrix()` 里那个跳过分支成了
+    # 死代码：全新克隆（没有 local/.singbox-bin，内核路径不会跟着克隆过来）
+    # 跑门禁时，matrix-path-renamed 报的是「门禁失效了」，而真相是「这次没验」。
+    # 假红比假绿温和，但它会训练人忽略红色 —— 这正是本脚本要防的东西。
+    codes |= {it.get("code") for it in items if it.get("code") in ENV_SKIP_CODES}
+    return codes
 
 
 class SkipCase(Exception):
@@ -740,11 +759,10 @@ def run_case_matrix(name, mutate, base_text, level):
     try:
         register_dirty(MATRIX, original)    # 见文件头「两层保护」
         MATRIX.write_bytes(text.replace(old_anchor, new_anchor).encode("utf-8"))
-        # 探针需要真实内核：没有可执行文件时**跳过**（不能报绿，那是撒谎）。
-        codes = _audit_codes(None, level, no_check=False)
-        if "matrix_probe_skipped" in codes:
-            raise SkipCase("本机没有 sing-box 可执行文件，探针没法跑")
-        return codes
+        # 探针需要真实内核。**跳过与否由 main() 判**（判据是用例要断言的 code，
+        # 见 PROBE_CODES）—— 写在这里只能按作用域一刀切，会把不需要内核的
+        # 覆盖窗口用例一起跳掉。
+        return _audit_codes(None, level, no_check=False)
     finally:
         MATRIX.write_bytes(original)
         unregister_dirty(MATRIX)
@@ -805,6 +823,7 @@ def main():
     print("  门禁负向回归：每个用例故意改坏一处，期望对应门禁报出指定 code")
     print("═" * 68)
     bad = []
+    skipped = 0
     try:
         for name, mutate, expect, level, scope in cases:
             try:
@@ -813,12 +832,20 @@ def main():
                     codes = run_case_tpl(name, mutate, base_text, level)
                 elif scope == "matrix":
                     codes = run_case_matrix(name, mutate, base_text, level)
+                    # 只有**探针类** code 才需要内核；没装内核 ⇒ 没验 ⇒ 跳过，不判红。
+                    if expect in PROBE_CODES and "matrix_probe_skipped" in codes:
+                        raise SkipCase("本机没有 sing-box 可执行文件，探针没法跑")
                 elif scope == "repo":
                     codes = run_case_repo(name, mutate, base_text, level)
                 elif scope == "doc":
                     codes = run_case_doc(name, mutate, base_text, level)
                 elif scope == "doc_kernel":
                     codes = run_case_doc(name, mutate, base_text, level, use_kernel=True)
+                    # 同 matrix 作用域：探针类门禁要真内核，没有就**跳过**。
+                    # 缺这一步的话，没装内核的机器上 matrix-path-unprobeable
+                    # 会一直挂红，而它想验的门禁其实一次都没跑 —— 假红。
+                    if expect in PROBE_CODES and "matrix_probe_skipped" in codes:
+                        raise SkipCase("本机没有 sing-box 可执行文件，探针没法跑")
                 else:
                     codes = run_case_single(name, mutate, base_text, level)
                 ok, why = expect in codes, "命中"
@@ -826,6 +853,7 @@ def main():
                     why = f"**没有**报出 {expect!r}"
             except SkipCase as ex:
                 print(f"  ⏭ {name:<26} [{level:<5}] → {expect}   跳过：{ex}")
+                skipped += 1
                 continue
             except Exception as ex:                      # noqa: BLE001
                 ok, why, codes = False, f"跑崩了：{ex}", set()
@@ -848,7 +876,15 @@ def main():
             print(f"       {name}（期望 {expect}）")
         print("═" * 68)
         return 1
-    print(f"  ✅ {len(cases)}/{len(cases)} 个用例全部命中——门禁是活的")
+    hit = len(cases) - skipped
+    if hit:
+        print(f"  ✅ {hit}/{len(cases)} 个用例命中——门禁是活的")
+    if skipped:
+        # 跳过的不能算进「命中」：这条汇总行是给人一眼扫的，
+        # 把跳过写成全绿就等于宣布「69 个都验过了」，而实际上有 N 个一次没跑。
+        print(f"  ⏭ {skipped}/{len(cases)} 个用例**跳过（没验）**——"
+              "探针类门禁这一轮等于没查（多半是本机没有 sing-box 内核），"
+              "别把上面当全绿")
     print("═" * 68)
     return 0
 

@@ -1315,7 +1315,7 @@ def _probe_verdict(binary: str, cfg, tmp: Path, target_version: str = None):
     return known, {"deprecated_in": dep_v, "removed_in": rem_v}, out
 
 
-def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
+def audit_matrix_paths(rep: Report, matrix, target_version: str, binary, deferred=None):
     """矩阵 path 与锁定内核的「字段实际是否存在」交叉对账。
 
     这是「内核升级导致门禁失效」的**检测器**：矩阵与内核任何一边变了这里都会响。
@@ -1329,8 +1329,23 @@ def audit_matrix_paths(rep: Report, matrix, target_version: str, binary):
         就是为了让人误用时不至于炸；正因如此才需要 `kind=deprecated` 门禁，两者不矛盾。
         早先误把这当 ERROR，一跑就 17 条假报警，已删。
       · 两边都不提版本号 —— 信息不足，不判。
+
+    `deferred`：传内核路径表示「内核找到了，但本轮带 --no-check」。
+    这与「没装内核」（`deferred is None`）必须分开报 —— 前者是排期问题，
+    后者才是环境缺失，两者的处置动作完全不同。
     """
     if binary is None:
+        if deferred is not None:
+            # 复用 matrix_probe_skipped 这个 code（不新增门禁码）：探针**确实**没跑，
+            # 只是原因不同。级别降到 INFO —— 这是排期（--run 由第 2 步做），
+            # 不是环境缺失，不该在 --run 的第 1 步报黄。
+            rep.info(
+                "matrix_probe_skipped",
+                "交叉对账**本轮没有执行**：内核已就位（" + deferred + "），"
+                "但这次带了 --no-check。check-all.sh --run 由第 2 步单独做，"
+                "不是环境问题，别去改 local/.singbox-bin",
+            )
+            return
         # ⚠️ 这里**不能**只报 INFO 就走 —— 那条路会让「没装内核」看起来和「查过了、全对」
         # 完全一样：矩阵被改坏、门禁全绿、退出码 0（实测过）。这正是 L25/L45 同形的
         # 「静默失效比报错危险」，而且是本仓库最该避免的一种。
@@ -3532,7 +3547,15 @@ def main():
     # 这是「内核升级导致门禁失效」的检测器：矩阵与内核任何一边变了，这里都会响。
     probe_rep = Report("docs/version-matrix.json path ⟺ 内核")
     if not args.config_only:
-        audit_matrix_paths(probe_rep, matrix, version, None if args.no_check else find_singbox(args.singbox))
+        # ⚠️ 「本轮带 --no-check」与「本机没装内核」是**两件事**，不能混成同一句。
+        # check-all.sh --run 的第 1 步固定带 --no-check（避免重复加载规则集），
+        # 交叉对账由第 2 步单独做；此前两种情况都走「None ⇒ 未指定内核」那条分支，
+        # 于是在**内核就位**、脚本开头刚打印过版本号的运行里报「未指定可执行文件」——
+        # 自相矛盾的假红灯，人会跑去翻 local/.singbox-bin，而问题只在文案上。
+        _sb = find_singbox(args.singbox)
+        audit_matrix_paths(probe_rep, matrix, version,
+                           None if args.no_check else _sb,
+                           deferred=_sb if args.no_check else None)
     if probe_rep.items and not args.json:
         for lv, code, msg, where in probe_rep.items:
             print(f"[{lv[0]}] {msg}" + (f"   ← {where}" if where else ""))
@@ -3553,7 +3576,15 @@ def main():
         # 引用完整性、平台能力、组一致性、DNS 广告层顺序等**一律照查**。
         targets = sorted(PROFILES.rglob("*.json")) + [ROOT / "templates" / "groups.json"]
         if LOCAL.is_dir():
-            targets += sorted(LOCAL.glob("*.json"))
+            # ⚠️ 点开头的文件是**工具状态**，不是配置。
+            # `pathlib.glob("*.json")` 会匹配隐藏文件（这点与 shell 不同），
+            # 于是 tools/negtest.py 写在 local/ 的 .negtest-baseline.json 会被当成
+            # 一份配置来审 —— 实测报出 4 条假 ERROR（route.final / optimistic /
+            # udp_nat_max / 封 UDP 443 全缺），而它压根不是配置，只是上一轮开跑前
+            # 存下的文件快照。这份文件只在「上一轮被硬杀」时才留得下来，正好是
+            # 最容易被误判成「门禁坏了」的时刻 —— 假 ERROR 把真信号盖住了。
+            targets += sorted(p for p in LOCAL.glob("*.json")
+                              if not p.name.startswith("."))
 
     if not targets:
         print("没有找到任何配置文件", file=sys.stderr)
